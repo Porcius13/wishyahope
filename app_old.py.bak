@@ -1,0 +1,4819 @@
+import uuid
+import asyncio
+import re
+import traceback
+import os
+import json
+import hashlib
+import time
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from models import init_db, User, Product, Collection
+try:
+    from universal_scraper import universal_scraper
+    UNIVERSAL_SCRAPER_AVAILABLE = True
+except ImportError as e:
+    print(f"[UYARI] universal_scraper modülü yüklenemedi: {e}")
+    UNIVERSAL_SCRAPER_AVAILABLE = False
+    universal_scraper = None
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("[UYARI] python-dotenv yüklü değil, .env dosyası yüklenmeyecek")
+    pass
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'favit-secret-key-2025')
+
+# Simple cache for scraping results
+scraping_cache = {}
+CACHE_DURATION = 3600  # 1 hour cache
+
+# File to store dynamically added brands
+BRANDS_FILE = "dynamic_brands.json"
+
+# Site-specific scraping configurations
+SITE_CONFIGS = {
+    "ltbjeans.com": {
+        "image_selectors": [
+            "img[src*='ltbjeans-hybris-p1.mncdn.com']",
+            "img[alt*='Regular Askılı']",
+            "img[title*='Regular Askılı']"
+        ],
+        "price_selectors": [
+            "span.dis__new--price",
+            ".dis__new--price"
+        ],
+        "old_price_selectors": [
+            "span.dis__old--price",
+            ".dis__old--price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "koton.com": {
+        "image_selectors": [
+            "img.lg-object.lg-image",
+            "img[src*='ktnimg2.mncdn.com']",
+            "img[class*='lg-image']"
+        ],
+        "price_selectors": [
+            "pz-price[rendered='true']",
+            "pz-price"
+        ],
+        "old_price_selectors": [],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "defacto.com.tr": {
+        "image_selectors": [
+            "img.product-image",
+            "img[class*='product-image']",
+            "img[src*='defacto']"
+        ],
+        "price_selectors": [
+            "div.base-price.campaing-base-price",
+            ".campaing-base-price",
+            "div.base-price span"
+        ],
+        "old_price_selectors": [
+            "div.base-price.lined-base-price",
+            ".lined-base-price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "mavi.com": {
+        "image_selectors": [
+            "img[src*='sky-static.mavi.com']",
+            "img[src*='mavi.com']",
+            "img[alt*='LONDON']"
+        ],
+        "price_selectors": [
+            "span.price",
+            ".price",
+            "span.nodiscount-price",
+            ".nodiscount-price"
+        ],
+        "old_price_selectors": [],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "pullandbear.com": {
+        "image_selectors": [
+            "img#image",
+            "img[alt*='SpongeBob']",
+            "img[src*='static.pullandbear.net']",
+            "img[src*='pullandbear.net/assets']"
+        ],
+        "price_selectors": [
+            "span.number",
+            ".number",
+            "span.number:first-of-type"
+        ],
+        "old_price_selectors": [
+            "span.number",
+            ".number",
+            "span.number:last-of-type"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "marksandspencer.com.tr": {
+        "image_selectors": [
+            "img[src*='products']",
+            "img[alt*='Pantolon']",
+            "img[alt*='pantolon']",
+            "img[alt*='Keten']",
+            "img[alt*='keten']",
+            "img[class*='js-image-zoom']",
+            "img[src*='a53e12.a-cdn.akinoncloud.com/products']"
+        ],
+        "price_selectors": [
+            ".price",
+            ".current-price",
+            ".sale-price",
+            "[class*='price']"
+        ],
+        "old_price_selectors": [
+            ".old-price",
+            ".original-price",
+            ".price-old",
+            "s.price",
+            "del.price",
+            "[class*='old'][class*='price']"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            "[class*='product'][class*='title']"
+        ]
+    },
+    "bershka.com": {
+        "image_selectors": [
+            "img[data-qa-anchor='pdpMainImage']",
+            "img[src*='static.bershka.net']",
+            "img.image-item"
+        ],
+        "price_selectors": [
+            "span.current-price-elem--discounted",
+            ".current-price-elem--discounted",
+            "span[data-qa-anchor='productItemDiscount']"
+        ],
+        "old_price_selectors": [
+            "s.old-price-elem",
+            ".old-price-elem",
+            "s[data-qa-anchor='productItemPrice']"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "shop.mango.com": {
+        "image_selectors": [
+            "img.ImageGridItem_image__VVZxr",
+            "img[src*='shop.mango.com/assets']",
+            "img[alt*='Cepli keten gömlek']",
+            "img[srcset*='shop.mango.com/assets']",
+            "img[decoding='async']",
+            "img[data-nimg='1']",
+            "img[style*='color:transparent']"
+        ],
+        "price_selectors": [
+            "span.SinglePrice_finalPrice__XBL1k",
+            ".SinglePrice_finalPrice__XBL1k",
+            "span.SinglePrice_center__TMNty.texts_bodyM__Y2ZHT.SinglePrice_finalPrice__XBL1k",
+            "span[class*='SinglePrice_finalPrice']",
+            "span[class*='finalPrice']"
+        ],
+        "old_price_selectors": [
+            "span.SinglePrice_crossed__mUCG8",
+            ".SinglePrice_crossed__mUCG8",
+            "span.SinglePrice_crossed__mUCG8.SinglePrice_center__TMNty.texts_bodyM__Y2ZHT",
+            "span[class*='SinglePrice_crossed']",
+            "span[class*='crossed']"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            "h1",
+            "title",
+            "h1[class*='product']",
+            "h1[class*='title']"
+        ]
+    },
+    "stradivarius.com": {
+        "image_selectors": [
+            "img.product-image",
+            "img[class*='product-image']",
+            "img[src*='stradivarius']"
+        ],
+        "price_selectors": [
+            "span.price",
+            ".price"
+        ],
+        "old_price_selectors": [
+            "span.old-price",
+            ".old-price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "kaft.com": {
+        "image_selectors": [
+            "img.product-image",
+            "img[class*='product-image']",
+            "img[src*='kaft']"
+        ],
+        "price_selectors": [
+            "span.current",
+            ".current",
+            "span.price"
+        ],
+        "old_price_selectors": [],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "wwfmarket.com": {
+        "image_selectors": [
+            "img.product__media",
+            "img[src*='wwfmarket.com/cdn']",
+            "img[alt*='Bozayı']"
+        ],
+        "price_selectors": [
+            "span.price-item--sale",
+            ".price-item--sale"
+        ],
+        "old_price_selectors": [
+            "span.price-item--regular",
+            ".price-item--regular"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "lufian.com": {
+        "image_selectors": [
+            "img[src*='witcdn.lufian.com']",
+            "img[alt*='Marcus Modern']",
+            "img[data-toggle='zoom-image']"
+        ],
+        "price_selectors": [
+            "div.text-danger.cart-discount",
+            ".cart-discount"
+        ],
+        "old_price_selectors": [
+            "span.product-price",
+            ".product-price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "sneaksup.com": {
+        "image_selectors": [
+            "img.detail-image",
+            "img[src*='img-sneaksupincommerce.mncdn.com']",
+            "img[alt*='Nike Dunk']"
+        ],
+        "price_selectors": [
+            "span.detail-price.font-weight-bold",
+            ".detail-price.font-weight-bold"
+        ],
+        "old_price_selectors": [
+            "s.detail-price.detail-old-price",
+            ".detail-old-price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name"
+        ]
+    },
+    "consumer.huawei.com": {
+        "image_selectors": [
+            "img.swiper-lazy.pix-aem-image-center",
+            "img[src*='/dam/content/dam/huawei-cbg-site']",
+            "img[alt*='HUAWEI MatePad Pro']",
+            "img[class*='pix-aem-image-center']",
+            "img[data-v-9c9f91a6]"
+        ],
+        "price_selectors": [
+            "p.opt-price",
+            ".opt-price",
+            "p[data-v-41bd0b27]",
+            "p[class*='opt-price']",
+            "p[data-v-ac9ebe2c-s]",
+            "span.price",
+            ".price",
+            "div.price",
+            "span[class*='price']",
+            "div[class*='price']",
+            "span[class*='opt-price']",
+            "p[class*='price']"
+        ],
+        "old_price_selectors": [],
+        "title_selectors": [
+            "h2[data-v-5b98c9ea]",
+            "h2[title*='HUAWEI']",
+            "h2[data-v-5b98c9ea][title]",
+            "h2",
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            "h1",
+            "title"
+        ]
+    },
+    "zara.com": {
+        "image_selectors": [
+            "img[data-testid='product-detail-image']",
+            "img[class*='product-image']",
+            "img[class*='main-image']",
+            "img[src*='zara']"
+        ],
+        "price_selectors": [
+            "span.money-amount__main",
+            ".money-amount__main",
+            "span[class*='money-amount']",
+            "span[class*='price']",
+            ".price"
+        ],
+        "old_price_selectors": [
+            "span.money-amount__main",
+            ".money-amount__main"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            "h1"
+        ]
+    },
+    "lesbenjamins.com": {
+        "image_selectors": [
+            ".product__media img:first-of-type",
+            ".product-single__media img:first-of-type",
+            ".product__media-wrapper img:first-of-type",
+            ".product__photos img:first-of-type",
+            "img.product__media-image",
+            "img.product-single__media-image",
+            "img[data-product-image]:first-of-type",
+            "img.product__image:first-of-type",
+            "img.product-single__image:first-of-type",
+            ".product__media img",
+            ".product-single__media img",
+            "img[data-product-image]",
+            "img.product__image",
+            "img.product-single__image",
+            "img.pswp__img",
+            "img[class*='pswp__img']",
+            "img[src*='lesbenjamins.com/cdn/shop/files']",
+            "img[src*='lesbenjamins.com/cdn/shop/products']",
+            "img[alt*='RELAXED']",
+            "img[alt*='Relaxed']",
+            "img[fetchpriority='high']",
+            "img.image__img"
+        ],
+        "price_selectors": [
+            "span.money",
+            ".money",
+            "span[class*='money']"
+        ],
+        "old_price_selectors": [
+            "s[data-compare-price] span.money",
+            "s span.money",
+            "span.money"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            "h1"
+        ]
+    },
+    "sportime.com.tr": {
+        "image_selectors": [
+            "img.product-single__photo",
+            "img.product__photo",
+            "img[data-product-image]",
+            "img.product__image",
+            "img.product-single__media img",
+            "img.product__media img",
+            ".product-single__photo img",
+            ".product__photo img",
+            "img[src*='sportime.com.tr/cdn']",
+            "img[src*='sportime.com.tr/files']",
+            "img[src*='cdn.shopify.com']",
+            "img[data-src*='sportime']",
+            "img[data-src*='cdn.shopify']",
+            "img[class*='product-image']",
+            "img[class*='product__image']",
+            "img[class*='product-single']",
+            "img[alt*='Champion']",
+            "img[alt*='champion']",
+            "img.product-image",
+            "img.product__media"
+        ],
+        "price_selectors": [
+            ".product-price",
+            ".product__price",
+            ".product-single__price",
+            "span.product-price",
+            "span.product__price",
+            "span.product-single__price",
+            ".price",
+            "span.price",
+            ".money",
+            "span.money",
+            "[class*='product'][class*='price']",
+            "[class*='price']",
+            "[class*='Price']",
+            "span[class*='price']",
+            "div[class*='price']",
+            "[data-price]",
+            ".current-price",
+            ".sale-price",
+            "span.current-price",
+            "span.sale-price",
+            "[itemprop='price']",
+            "[itemprop='priceCurrency']"
+        ],
+        "old_price_selectors": [
+            ".old-price",
+            ".original-price",
+            "span.old-price",
+            "span.original-price",
+            "[class*='old'][class*='price']",
+            "[class*='original'][class*='price']",
+            "s.price",
+            "del.price"
+        ],
+        "title_selectors": [
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            ".product-title",
+            "h1[class*='product']",
+            "h1[class*='title']",
+            "[class*='product'][class*='name']",
+            "[class*='product'][class*='title']",
+            "h1"
+        ]
+    },
+    "altinyildizclassics.com": {
+        "image_selectors": [
+            "img[src*='altinyildizclassics.com']",
+            "img[alt*='Standart Fit']",
+            "img[alt*='Sweatshirt']",
+            "img.product-image",
+            "img[class*='product-image']",
+            "img[class*='product__image']",
+            "img[srcset*='altinyildizclassics']",
+            ".product-image img",
+            ".product__image img",
+            "img[data-src*='altinyildiz']"
+        ],
+        "price_selectors": [
+            "span[class*='price']",
+            "div[class*='price']",
+            ".price",
+            "span.price",
+            "div.price",
+            "[class*='current-price']",
+            "[class*='sale-price']",
+            "[class*='final-price']",
+            "span:contains('TL')",
+            "div:contains('TL')",
+            "[itemprop='price']"
+        ],
+        "old_price_selectors": [
+            "span[class*='old-price']",
+            "span[class*='original-price']",
+            "del.price",
+            "s.price",
+            "[class*='old'][class*='price']",
+            "[class*='original'][class*='price']"
+        ],
+        "title_selectors": [
+            "h1",
+            "h1.product-name",
+            "h1.product-title",
+            ".product-name",
+            ".product-title",
+            "[class*='product'][class*='name']",
+            "[class*='product'][class*='title']",
+            "title"
+        ]
+    }
+}
+
+def get_site_config(url):
+    """URL'den site konfigürasyonunu al"""
+    for domain, config in SITE_CONFIGS.items():
+        if domain in url:
+            return config
+    return None
+
+async def extract_with_site_config(page, url, site_config):
+    """Site-specific konfigürasyon kullanarak veri çek"""
+    title = None
+    price = None
+    old_price = None
+    image = None
+    
+    try:
+        # Başlık çekme
+        if site_config and 'title_selectors' in site_config:
+            for selector in site_config['title_selectors']:
+                try:
+                    title_element = await page.query_selector(selector)
+                    if title_element:
+                        title = await title_element.text_content()
+                        if title and title.strip():
+                            title = title.strip().upper()
+                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                            title = re.sub(r'\s+', ' ', title).strip()
+                            print(f"[DEBUG] Site-specific başlık bulundu: {title}")
+                            break
+                except Exception as e:
+                    print(f"[DEBUG] Title selector hatası {selector}: {e}")
+                    continue
+        
+        # Fiyat çekme - Hem current hem old price için aynı selector kullanılıyorsa
+        if site_config and 'price_selectors' in site_config:
+            all_prices = []
+            
+            # Sportime.com.tr için özel fiyat çıkarma mantığı (Shopify)
+            if "sportime.com.tr" in url:
+                print(f"[DEBUG] Sportime.com.tr için özel fiyat çıkarma başlıyor")
+                try:
+                    # Önce JSON-LD structured data'dan fiyat çek (en güvenilir)
+                    try:
+                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                        for script in json_ld_scripts:
+                            script_content = await script.text_content()
+                            if script_content and 'offers' in script_content:
+                                import json
+                                try:
+                                    data = json.loads(script_content)
+                                    if isinstance(data, dict) and 'offers' in data:
+                                        offers = data['offers']
+                                        if isinstance(offers, dict) and 'price' in offers:
+                                            price_value = offers['price']
+                                            if isinstance(price_value, (int, float)) and price_value > 0:
+                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                print(f"[DEBUG] Sportime JSON-LD fiyat bulundu: {price}")
+                                                break
+                                        elif isinstance(offers, list) and len(offers) > 0:
+                                            if 'price' in offers[0]:
+                                                price_value = offers[0]['price']
+                                                if isinstance(price_value, (int, float)) and price_value > 0:
+                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] Sportime JSON-LD fiyat bulundu: {price}")
+                                                    break
+                                except json.JSONDecodeError:
+                                    continue
+                    except Exception as e:
+                        print(f"[DEBUG] Sportime JSON-LD fiyat çekme hatası: {e}")
+                    
+                    # JSON-LD'den bulunamadıysa meta tag'lerden çek
+                    if not price:
+                        try:
+                            meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                            if meta_price:
+                                price_value = await meta_price.get_attribute('content')
+                                if price_value:
+                                    try:
+                                        price_float = float(price_value)
+                                        if price_float > 0:
+                                            price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                            print(f"[DEBUG] Sportime meta fiyat bulundu: {price}")
+                                    except:
+                                        pass
+                        except Exception as e:
+                            print(f"[DEBUG] Sportime meta fiyat çekme hatası: {e}")
+                    
+                    # Meta'dan da bulunamadıysa DOM'dan çek
+                    if not price:
+                        # Shopify'ın standart fiyat selector'ları - öncelik sırasına göre
+                        sportime_price_selectors = [
+                            '.product-price .money',
+                            '.product__price .money',
+                            '.product-single__price .money',
+                            '.price .money',
+                            '[itemprop="price"]',
+                            '.product-price',
+                            '.product__price',
+                            '.product-single__price',
+                            '.money',
+                            'span.money',
+                            'span.product-price',
+                            '.price',
+                            'span.price',
+                            '[data-price]',
+                            '.current-price',
+                            '.sale-price'
+                        ]
+                        
+                        all_found_prices = []
+                        
+                        for selector in sportime_price_selectors:
+                            try:
+                                price_elements = await page.query_selector_all(selector)
+                                for element in price_elements:
+                                    price_text = await element.text_content()
+                                    if price_text and price_text.strip():
+                                        price_text = price_text.strip()
+                                        print(f"[DEBUG] Sportime price element text: '{price_text[:100]}...' (selector: {selector})")
+                                        
+                                        # Çoklu fiyat içeren metinleri ayır (örn: "5.199.00 TL ... 2.599,50 TL")
+                                        # Önce tüm fiyatları bul - hem Türkçe format (2.599,50) hem de İngilizce format (5.199.00)
+                                        all_price_matches = re.findall(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]{1,3}(?:\.[0-9]{3})*\.[0-9]{2})', price_text)
+                                        
+                                        # Eğer Türkçe format bulunamadıysa, İngilizce formatı dene (5.199.00)
+                                        if not all_price_matches:
+                                            all_price_matches = re.findall(r'([0-9]{1,3}(?:\.[0-9]{3})*\.[0-9]{2})', price_text)
+                                        
+                                        if all_price_matches:
+                                            # Her fiyatı değerlendir
+                                            for price_match in all_price_matches:
+                                                # Fiyatı sayıya çevir
+                                                try:
+                                                    # Format: 2.599,50 (Türkçe) veya 5.199.00 (İngilizce)
+                                                    # Türkçe format: nokta binlik, virgül ondalık
+                                                    if ',' in price_match:
+                                                        price_clean = price_match.replace('.', '').replace(',', '.')
+                                                    # İngilizce format: nokta hem binlik hem ondalık
+                                                    else:
+                                                        price_clean = price_match.replace('.', '')
+                                                        # Son 2 haneyi ondalık olarak ayır
+                                                        if len(price_clean) >= 2:
+                                                            price_clean = price_clean[:-2] + '.' + price_clean[-2:]
+                                                    price_num = float(price_clean)
+                                                    
+                                                    # Mantıklı fiyat aralığı kontrolü (10 TL - 100.000 TL)
+                                                    if 10 <= price_num <= 100000:
+                                                        # Türkçe formatına çevir (2.599,50 TL)
+                                                        if ',' in price_match:
+                                                            found_price = price_match
+                                                        else:
+                                                            # İngilizce formatı Türkçe'ye çevir (5.199.00 -> 5.199,00)
+                                                            found_price = price_match.replace('.', ',', 1) if price_match.count('.') > 1 else price_match.replace('.', ',')
+                                                        
+                                                        # TL ekle eğer yoksa
+                                                        if '₺' not in price_text and 'TL' not in price_text.upper():
+                                                            found_price = found_price + " TL"
+                                                        
+                                                        # Eski fiyat mı yoksa yeni fiyat mı kontrol et
+                                                        # Eğer metinde "indirim", "sale", "%" varsa ve iki fiyat varsa, düşük olanı seç
+                                                        is_discount = any(word in price_text.lower() for word in ['indirim', 'sale', '%', 'discount'])
+                                                        
+                                                        all_found_prices.append({
+                                                            'price': found_price,
+                                                            'price_num': price_num,
+                                                            'text': price_text,
+                                                            'selector': selector,
+                                                            'priority': sportime_price_selectors.index(selector),
+                                                            'is_discount': is_discount
+                                                        })
+                                                        print(f"[DEBUG] Sportime fiyat adayı bulundu: {found_price} ({price_num} TL) (selector: {selector}, indirim: {is_discount})")
+                                                except ValueError:
+                                                    continue
+                                        # Tek fiyat formatı
+                                        else:
+                                            # Önce tam format: 1.299,99 veya 1.299,99 TL
+                                            price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', price_text)
+                                            if price_match:
+                                                found_price = price_match.group(1)
+                                                # TL ekle eğer yoksa
+                                                if '₺' not in price_text and 'TL' not in price_text.upper():
+                                                    found_price = found_price + " TL"
+                                                try:
+                                                    price_clean = found_price.replace('.', '').replace(',', '.').replace(' TL', '')
+                                                    price_num = float(price_clean)
+                                                    if 10 <= price_num <= 100000:
+                                                        all_found_prices.append({
+                                                            'price': found_price,
+                                                            'price_num': price_num,
+                                                            'text': price_text,
+                                                            'selector': selector,
+                                                            'priority': sportime_price_selectors.index(selector),
+                                                            'is_discount': False
+                                                        })
+                                                        print(f"[DEBUG] Sportime fiyat adayı bulundu: {found_price} (selector: {selector})")
+                                                except ValueError:
+                                                    pass
+                                            # Alternatif format: 199.00 veya 199 TL
+                                            else:
+                                                alt_match = re.search(r'([0-9]+(?:\.[0-9]{2})?)\s*(?:₺|TL|tl)', price_text)
+                                                if alt_match:
+                                                    found_price = alt_match.group(1) + " TL"
+                                                    try:
+                                                        price_num = float(alt_match.group(1))
+                                                        if 10 <= price_num <= 100000:
+                                                            all_found_prices.append({
+                                                                'price': found_price,
+                                                                'price_num': price_num,
+                                                                'text': price_text,
+                                                                'selector': selector,
+                                                                'priority': sportime_price_selectors.index(selector),
+                                                                'is_discount': False
+                                                            })
+                                                            print(f"[DEBUG] Sportime fiyat adayı bulundu (alt format): {found_price} (selector: {selector})")
+                                                    except ValueError:
+                                                        pass
+                            except Exception as e:
+                                print(f"[DEBUG] Sportime price selector hatası {selector}: {e}")
+                                continue
+                    
+                        # En yüksek öncelikli fiyatı seç (daha spesifik selector'lar öncelikli)
+                        if all_found_prices:
+                            # Önce öncelik sırasına göre sırala (düşük index = yüksek öncelik)
+                            all_found_prices.sort(key=lambda x: x['priority'])
+                            
+                            # Fiyatları sayısal değere göre sırala
+                            all_found_prices.sort(key=lambda x: x['price_num'])
+                            
+                            # İndirimli fiyat varsa (en düşük fiyat), onu seç
+                            # Eğer birden fazla fiyat varsa, en düşük olanı indirimli fiyat, en yüksek olanı eski fiyat
+                            if len(all_found_prices) > 1:
+                                # En düşük fiyat = indirimli fiyat
+                                selected = all_found_prices[0]
+                                price = selected['price']
+                                
+                                # En yüksek fiyat = eski fiyat
+                                old_price_selected = all_found_prices[-1]
+                                # Sayısal değeri kullan (zaten doğru formatlanmış)
+                                old_price_num = old_price_selected['price_num']
+                                
+                                # Türkçe formatına çevir (5.199,00 TL)
+                                if old_price_num >= 1000:
+                                    old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                else:
+                                    old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                
+                                print(f"[DEBUG] Sportime indirimli fiyat seçildi: {price} (selector: {selected['selector']})")
+                                print(f"[DEBUG] Sportime eski fiyat bulundu: {old_price} (selector: {old_price_selected['selector']})")
+                            else:
+                                # Tek fiyat varsa, onu kullan
+                                selected = all_found_prices[0]
+                                price = selected['price']
+                                old_price = None
+                                print(f"[DEBUG] Sportime fiyat seçildi: {price} (selector: {selected['selector']}, öncelik: {selected['priority']})")
+                        else:
+                            print(f"[DEBUG] Sportime hiç fiyat bulunamadı")
+                    
+                except Exception as e:
+                    print(f"[DEBUG] Sportime özel fiyat çıkarma hatası: {e}")
+            
+            # Mavi.com için özel fiyat çıkarma mantığı
+            elif "mavi.com" in url:
+                print(f"[DEBUG] Mavi.com için özel fiyat çıkarma başlıyor")
+                try:
+                    # Önce span.price elementlerini bul
+                    price_elements = await page.query_selector_all("span.price")
+                    nodiscount_elements = await page.query_selector_all("span.nodiscount-price")
+                    
+                    # span.price elementlerini işle (indirimli fiyatlar)
+                    for element in price_elements:
+                        price_text = await element.text_content()
+                        if price_text and price_text.strip():
+                            price_text = price_text.strip()
+                            clean_price = re.sub(r'[^\d,\.]', '', price_text)
+                            clean_price = clean_price.replace(',', '.')
+                            
+                            if re.match(r'^\d+\.?\d*$', clean_price):
+                                price_num = float(clean_price)
+                                all_prices.append({
+                                    'value': price_num,
+                                    'text': price_text,
+                                    'element': element,
+                                    'type': 'current'
+                                })
+                    
+                    # span.nodiscount-price elementlerini işle (eski fiyatlar)
+                    for element in nodiscount_elements:
+                        price_text = await element.text_content()
+                        if price_text and price_text.strip():
+                            price_text = price_text.strip()
+                            clean_price = re.sub(r'[^\d,\.]', '', price_text)
+                            clean_price = clean_price.replace(',', '.')
+                            
+                            if re.match(r'^\d+\.?\d*$', clean_price):
+                                price_num = float(clean_price)
+                                all_prices.append({
+                                    'value': price_num,
+                                    'text': price_text,
+                                    'element': element,
+                                    'type': 'old'
+                                })
+                    
+                    # Fiyatları ayır
+                    current_prices = [p for p in all_prices if p['type'] == 'current']
+                    old_prices = [p for p in all_prices if p['type'] == 'old']
+                    
+                    # Current price seç (en düşük indirimli fiyat)
+                    if current_prices:
+                        current_prices.sort(key=lambda x: x['value'])
+                        current_price = current_prices[0]
+                        price_num = current_price['value']
+                        
+                        if price_num >= 1000:
+                            price = f"{price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                        else:
+                            price = f"{price_num:.2f} TL".replace('.', ',')
+                        print(f"[DEBUG] Mavi.com current fiyat bulundu: {price}")
+                    
+                    # Old price seç (en yüksek eski fiyat)
+                    if old_prices:
+                        old_prices.sort(key=lambda x: x['value'], reverse=True)
+                        old_price_data = old_prices[0]
+                        old_price_num = old_price_data['value']
+                        
+                        if old_price_num >= 1000:
+                            old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                        else:
+                            old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                        print(f"[DEBUG] Mavi.com old fiyat bulundu: {old_price}")
+                    else:
+                        print(f"[DEBUG] Mavi.com eski fiyat bulunamadı")
+                        old_price = None
+                
+                except Exception as e:
+                    print(f"[DEBUG] Mavi.com özel fiyat çıkarma hatası: {e}")
+                    old_price = None
+            
+            # Marks & Spencer için özel fiyat çıkarma mantığı
+            elif "marksandspencer.com.tr" in url:
+                print(f"[DEBUG] Marks & Spencer için özel fiyat çıkarma başlıyor")
+                try:
+                    # Tüm fiyat elementlerini bul
+                    price_elements = await page.query_selector_all("[class*='price']")
+                    print(f"[DEBUG] Marks & Spencer bulunan fiyat elementleri sayısı: {len(price_elements)}")
+                    
+                    all_prices = []
+                    
+                    for i, element in enumerate(price_elements):
+                        price_text = await element.text_content()
+                        print(f"[DEBUG] Marks & Spencer element {i} text: '{price_text}'")
+                        if price_text and price_text.strip():
+                            price_text = price_text.strip()
+                            clean_price = re.sub(r'[^\d,\.]', '', price_text)
+                            clean_price = clean_price.replace(',', '.')
+                            print(f"[DEBUG] Marks & Spencer element {i} clean_price: '{clean_price}'")
+                            
+                            if re.match(r'^\d+\.?\d*$', clean_price):
+                                price_num = float(clean_price)
+                                all_prices.append({
+                                    'value': price_num,
+                                    'text': price_text,
+                                    'element': element
+                                })
+                                print(f"[DEBUG] Marks & Spencer element {i} fiyat eklendi: {price_num}")
+                    
+                    print(f"[DEBUG] Marks & Spencer toplam geçerli fiyat sayısı: {len(all_prices)}")
+                    print(f"[DEBUG] Marks & Spencer fiyatlar: {[p['value'] for p in all_prices]}")
+                    
+                    # Fiyatları sırala
+                    all_prices.sort(key=lambda x: x['value'])
+                    
+                    if all_prices:
+                        # En düşük fiyatı current price olarak al
+                        current_price = all_prices[0]
+                        price_num = current_price['value']
+                        
+                        if price_num >= 1000:
+                            price = f"{price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                        else:
+                            price = f"{price_num:.2f} TL".replace('.', ',')
+                        print(f"[DEBUG] Marks & Spencer current fiyat bulundu: {price}")
+                        
+                        # Eğer birden fazla fiyat varsa, en yüksek olanı old price olarak al
+                        if len(all_prices) > 1:
+                            old_price_data = all_prices[-1]
+                            old_price_num = old_price_data['value']
+                            
+                            if old_price_num >= 1000:
+                                old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                            else:
+                                old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                            print(f"[DEBUG] Marks & Spencer old fiyat bulundu: {old_price}")
+                        else:
+                            print(f"[DEBUG] Marks & Spencer sadece 1 fiyat bulundu, old price yok")
+                            old_price = None
+                    else:
+                        print(f"[DEBUG] Marks & Spencer hiç geçerli fiyat bulunamadı")
+                        old_price = None
+                
+                except Exception as e:
+                    print(f"[DEBUG] Marks & Spencer özel fiyat çıkarma hatası: {e}")
+            
+            # Mango için özel fiyat çıkarma mantığı
+            elif "mango.com" in url or "shop.mango.com" in url:
+                print(f"[DEBUG] Mango için özel fiyat çıkarma başlıyor")
+                try:
+                    # Önce JSON-LD structured data'dan fiyat çek (en güvenilir)
+                    try:
+                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                        for script in json_ld_scripts:
+                            script_content = await script.text_content()
+                            if script_content and 'offers' in script_content:
+                                import json
+                                try:
+                                    data = json.loads(script_content)
+                                    if isinstance(data, dict) and 'offers' in data:
+                                        offers = data['offers']
+                                        if isinstance(offers, dict) and 'price' in offers:
+                                            price_value = offers['price']
+                                            if isinstance(price_value, (int, float)) and price_value > 0:
+                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                print(f"[DEBUG] Mango JSON-LD fiyat bulundu: {price}")
+                                                break
+                                        elif isinstance(offers, list) and len(offers) > 0:
+                                            if 'price' in offers[0]:
+                                                price_value = offers[0]['price']
+                                                if isinstance(price_value, (int, float)) and price_value > 0:
+                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] Mango JSON-LD fiyat bulundu: {price}")
+                                                    break
+                                except json.JSONDecodeError:
+                                    continue
+                    except Exception as e:
+                        print(f"[DEBUG] Mango JSON-LD fiyat çekme hatası: {e}")
+                    
+                    # JSON-LD'den bulunamadıysa meta tag'lerden çek
+                    if not price:
+                        try:
+                            meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                            if meta_price:
+                                price_value = await meta_price.get_attribute('content')
+                                if price_value:
+                                    try:
+                                        price_float = float(price_value)
+                                        if price_float > 0:
+                                            price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                            print(f"[DEBUG] Mango meta fiyat bulundu: {price}")
+                                    except:
+                                        pass
+                        except Exception as e:
+                            print(f"[DEBUG] Mango meta fiyat çekme hatası: {e}")
+                    
+                    # Meta'dan da bulunamadıysa DOM'dan çek
+                    if not price:
+                        # Mango fiyat selector'ları - öncelik sırasına göre
+                        mango_price_selectors = [
+                            'span.SinglePrice_finalPrice__XBL1k',
+                            '.SinglePrice_finalPrice__XBL1k',
+                            'span[class*="SinglePrice_finalPrice"]',
+                            'span[class*="finalPrice"]',
+                            '[data-testid*="price"]',
+                            '[class*="price"]',
+                            'span[class*="Price"]',
+                            '.price',
+                            'span.price'
+                        ]
+                        
+                        all_found_prices = []
+                        
+                        for selector in mango_price_selectors:
+                            try:
+                                price_elements = await page.query_selector_all(selector)
+                                for element in price_elements:
+                                    price_text = await element.text_content()
+                                    if price_text and price_text.strip():
+                                        price_text = price_text.strip()
+                                        print(f"[DEBUG] Mango price element text: '{price_text[:100]}...' (selector: {selector})")
+                                        
+                                        # Fiyat formatları: "1.299,99 TL", "1.299,99₺", "1299,99 TL", vb.
+                                        # Türkçe format (1.299,99)
+                                        price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', price_text)
+                                        if not price_match:
+                                            # Basit format (1299,99 veya 1299.99)
+                                            price_match = re.search(r'([0-9]+[.,][0-9]{2})', price_text)
+                                        
+                                        if price_match:
+                                            found_price_str = price_match.group(1)
+                                            try:
+                                                # Fiyatı sayıya çevir
+                                                if ',' in found_price_str:
+                                                    # Format: 1.299,99 veya 1299,99 (Türkçe)
+                                                    price_clean = found_price_str.replace('.', '').replace(',', '.')
+                                                else:
+                                                    # Format: 1299.99
+                                                    price_clean = found_price_str
+                                                
+                                                price_num = float(price_clean)
+                                                
+                                                # Mantıklı fiyat aralığı kontrolü (10 TL - 100.000 TL)
+                                                if 10 <= price_num <= 100000:
+                                                    # Türkçe formatına çevir (1.299,99 TL)
+                                                    if price_num >= 1000:
+                                                        formatted_price = f"{price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    else:
+                                                        formatted_price = f"{price_num:.2f} TL".replace('.', ',')
+                                                    
+                                                    all_found_prices.append({
+                                                        'price': formatted_price,
+                                                        'price_num': price_num,
+                                                        'text': price_text,
+                                                        'selector': selector,
+                                                        'priority': mango_price_selectors.index(selector)
+                                                    })
+                                                    print(f"[DEBUG] Mango fiyat adayı bulundu: {formatted_price} ({price_num} TL) (selector: {selector})")
+                                            except ValueError:
+                                                continue
+                            except Exception as e:
+                                print(f"[DEBUG] Mango price selector hatası {selector}: {e}")
+                                continue
+                        
+                        # En yüksek öncelikli fiyatı seç
+                        if all_found_prices:
+                            # Önce öncelik sırasına göre sırala (düşük index = yüksek öncelik)
+                            all_found_prices.sort(key=lambda x: x['priority'])
+                            
+                            # İlk (en yüksek öncelikli) fiyatı seç
+                            selected = all_found_prices[0]
+                            price = selected['price']
+                            print(f"[DEBUG] Mango fiyat seçildi: {price} (selector: {selected['selector']}, öncelik: {selected['priority']})")
+                        else:
+                            print(f"[DEBUG] Mango hiç fiyat bulunamadı")
+                    
+                    # Eski fiyat kontrolü
+                    try:
+                        old_price_elements = await page.query_selector_all('span.SinglePrice_crossed__mUCG8, .SinglePrice_crossed__mUCG8, span[class*="crossed"], span[class*="old"], del.price')
+                        if old_price_elements:
+                            for element in old_price_elements:
+                                old_price_text = await element.text_content()
+                                if old_price_text and old_price_text.strip():
+                                    old_price_text = old_price_text.strip()
+                                    # Fiyat formatını parse et
+                                    old_price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+[.,][0-9]{2})', old_price_text)
+                                    if old_price_match:
+                                        old_price_str = old_price_match.group(1)
+                                        try:
+                                            if ',' in old_price_str:
+                                                old_price_clean = old_price_str.replace('.', '').replace(',', '.')
+                                            else:
+                                                old_price_clean = old_price_str.replace('.', '')
+                                            
+                                            old_price_num = float(old_price_clean)
+                                            if 10 <= old_price_num <= 100000:
+                                                if old_price_num >= 1000:
+                                                    old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                else:
+                                                    old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                                print(f"[DEBUG] Mango eski fiyat bulundu: {old_price}")
+                                                break
+                                        except ValueError:
+                                            continue
+                    except Exception as e:
+                        print(f"[DEBUG] Mango eski fiyat çekme hatası: {e}")
+                    
+                    if not old_price:
+                        print(f"[DEBUG] Mango eski fiyat bulunamadı")
+                
+                except Exception as e:
+                    print(f"[DEBUG] Mango özel fiyat çıkarma hatası: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    old_price = None
+            
+            # Les Benjamins için özel fiyat çıkarma mantığı
+            elif "lesbenjamins.com" in url:
+                print(f"[DEBUG] Les Benjamins için özel fiyat çıkarma başlıyor")
+                try:
+                    # Önce JSON-LD structured data'dan fiyat çek (en güvenilir)
+                    try:
+                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                        for script in json_ld_scripts:
+                            script_content = await script.text_content()
+                            if script_content and 'offers' in script_content:
+                                import json
+                                try:
+                                    data = json.loads(script_content)
+                                    if isinstance(data, dict) and 'offers' in data:
+                                        offers = data['offers']
+                                        if isinstance(offers, dict) and 'price' in offers:
+                                            price_value = offers['price']
+                                            if isinstance(price_value, (int, float)) and price_value > 0:
+                                                # Les Benjamins formatı: 2,799.00TL -> 2799.00
+                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                print(f"[DEBUG] Les Benjamins JSON-LD fiyat bulundu: {price}")
+                                                break
+                                        elif isinstance(offers, list) and len(offers) > 0:
+                                            if 'price' in offers[0]:
+                                                price_value = offers[0]['price']
+                                                if isinstance(price_value, (int, float)) and price_value > 0:
+                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] Les Benjamins JSON-LD fiyat bulundu: {price}")
+                                                    break
+                                except json.JSONDecodeError:
+                                    continue
+                    except Exception as e:
+                        print(f"[DEBUG] Les Benjamins JSON-LD fiyat çekme hatası: {e}")
+                    
+                    # JSON-LD'den bulunamadıysa meta tag'lerden çek
+                    if not price:
+                        try:
+                            meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                            if meta_price:
+                                price_value = await meta_price.get_attribute('content')
+                                if price_value:
+                                    try:
+                                        price_float = float(price_value)
+                                        if price_float > 0:
+                                            price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                            print(f"[DEBUG] Les Benjamins meta fiyat bulundu: {price}")
+                                    except:
+                                        pass
+                        except Exception as e:
+                            print(f"[DEBUG] Les Benjamins meta fiyat çekme hatası: {e}")
+                    
+                    # Meta'dan da bulunamadıysa DOM'dan çek
+                    if not price:
+                        # Les Benjamins fiyat selector'ları - öncelik sırasına göre
+                        lesbenjamins_price_selectors = [
+                            'span.money',
+                            '.money',
+                            'span[class*="money"]',
+                            '[data-price]',
+                            '.price',
+                            'span.price',
+                            'div.price',
+                            '[class*="price"]',
+                            'span[class*="price"]',
+                            'div[class*="price"]'
+                        ]
+                        
+                        all_found_prices = []
+                        
+                        for selector in lesbenjamins_price_selectors:
+                            try:
+                                price_elements = await page.query_selector_all(selector)
+                                for element in price_elements:
+                                    price_text = await element.text_content()
+                                    if price_text and price_text.strip():
+                                        price_text = price_text.strip()
+                                        print(f"[DEBUG] Les Benjamins price element text: '{price_text[:100]}...' (selector: {selector})")
+                                        
+                                        # Fiyat formatları: "2,799.00TL", "2.799,00 TL", "2799.00 TL", vb.
+                                        # Önce virgülle ayrılmış format (2,799.00)
+                                        price_match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})', price_text)
+                                        if not price_match:
+                                            # Türkçe format (2.799,00)
+                                            price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', price_text)
+                                        if not price_match:
+                                            # Basit format (2799.00 veya 2799,00)
+                                            price_match = re.search(r'([0-9]+[.,][0-9]{2})', price_text)
+                                        
+                                        if price_match:
+                                            found_price_str = price_match.group(1)
+                                            try:
+                                                # Fiyatı sayıya çevir
+                                                if ',' in found_price_str and '.' in found_price_str:
+                                                    # Format: 2,799.00 (İngilizce)
+                                                    price_clean = found_price_str.replace(',', '')
+                                                elif '.' in found_price_str and ',' not in found_price_str:
+                                                    # Format: 2799.00
+                                                    price_clean = found_price_str
+                                                else:
+                                                    # Format: 2.799,00 (Türkçe)
+                                                    price_clean = found_price_str.replace('.', '').replace(',', '.')
+                                                
+                                                price_num = float(price_clean)
+                                                
+                                                # Mantıklı fiyat aralığı kontrolü (10 TL - 100.000 TL)
+                                                if 10 <= price_num <= 100000:
+                                                    # Türkçe formatına çevir (2.799,00 TL)
+                                                    if price_num >= 1000:
+                                                        formatted_price = f"{price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    else:
+                                                        formatted_price = f"{price_num:.2f} TL".replace('.', ',')
+                                                    
+                                                    all_found_prices.append({
+                                                        'price': formatted_price,
+                                                        'price_num': price_num,
+                                    'text': price_text,
+                                                        'selector': selector,
+                                                        'priority': lesbenjamins_price_selectors.index(selector)
+                                                    })
+                                                    print(f"[DEBUG] Les Benjamins fiyat adayı bulundu: {formatted_price} ({price_num} TL) (selector: {selector})")
+                                            except ValueError:
+                                                continue
+                            except Exception as e:
+                                print(f"[DEBUG] Les Benjamins price selector hatası {selector}: {e}")
+                                continue
+                        
+                        # En yüksek öncelikli fiyatı seç (daha spesifik selector'lar öncelikli)
+                        if all_found_prices:
+                            # Önce öncelik sırasına göre sırala (düşük index = yüksek öncelik)
+                            all_found_prices.sort(key=lambda x: x['priority'])
+                            
+                            # İlk (en yüksek öncelikli) fiyatı seç
+                            selected = all_found_prices[0]
+                            price = selected['price']
+                            print(f"[DEBUG] Les Benjamins fiyat seçildi: {price} (selector: {selected['selector']}, öncelik: {selected['priority']})")
+                        else:
+                            print(f"[DEBUG] Les Benjamins hiç fiyat bulunamadı")
+                    
+                    # Eski fiyat kontrolü (s[data-compare-price] span.money)
+                    try:
+                        s_elements = await page.query_selector_all("s[data-compare-price] span.money")
+                        if s_elements:
+                            for element in s_elements:
+                                old_price_text = await element.text_content()
+                                if old_price_text and old_price_text.strip():
+                                    old_price_text = old_price_text.strip()
+                                    # Fiyat formatını parse et
+                                    old_price_match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2}|[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', old_price_text)
+                                    if old_price_match:
+                                        old_price_str = old_price_match.group(1)
+                                        try:
+                                            if ',' in old_price_str and '.' in old_price_str:
+                                                old_price_clean = old_price_str.replace(',', '')
+                                            elif '.' in old_price_str:
+                                                old_price_clean = old_price_str.replace('.', '').replace(',', '.')
+                                            else:
+                                                old_price_clean = old_price_str.replace('.', '').replace(',', '.')
+                                            
+                                            old_price_num = float(old_price_clean)
+                                            if 10 <= old_price_num <= 100000:
+                                                if old_price_num >= 1000:
+                                                    old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                else:
+                                                    old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                                print(f"[DEBUG] Les Benjamins eski fiyat bulundu: {old_price}")
+                                                break
+                                        except ValueError:
+                                            continue
+                    except Exception as e:
+                        print(f"[DEBUG] Les Benjamins eski fiyat çekme hatası: {e}")
+                    
+                    if not old_price:
+                        print(f"[DEBUG] Les Benjamins eski fiyat bulunamadı")
+                
+                except Exception as e:
+                    print(f"[DEBUG] Les Benjamins özel fiyat çıkarma hatası: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    old_price = None
+            
+            # Altınyıldız Classics için özel fiyat çıkarma mantığı
+            elif "altinyildizclassics.com" in url:
+                print(f"[DEBUG] Altınyıldız Classics için özel fiyat çıkarma başlıyor")
+                try:
+                    # Önce JSON-LD structured data'dan fiyat çek (en güvenilir)
+                    try:
+                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                        for script in json_ld_scripts:
+                            script_content = await script.text_content()
+                            if script_content and 'offers' in script_content:
+                                import json
+                                try:
+                                    data = json.loads(script_content)
+                                    if isinstance(data, dict) and 'offers' in data:
+                                        offers = data['offers']
+                                        if isinstance(offers, dict) and 'price' in offers:
+                                            price_value = offers['price']
+                                            if isinstance(price_value, (int, float)) and price_value > 0:
+                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                print(f"[DEBUG] Altınyıldız JSON-LD fiyat bulundu: {price}")
+                                                break
+                                        elif isinstance(offers, list) and len(offers) > 0:
+                                            if 'price' in offers[0]:
+                                                price_value = offers[0]['price']
+                                                if isinstance(price_value, (int, float)) and price_value > 0:
+                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] Altınyıldız JSON-LD fiyat bulundu: {price}")
+                                                    break
+                                except json.JSONDecodeError:
+                                    continue
+                    except Exception as e:
+                        print(f"[DEBUG] Altınyıldız JSON-LD fiyat çekme hatası: {e}")
+                    
+                    # JSON-LD'den bulunamadıysa meta tag'lerden çek
+                    if not price:
+                        try:
+                            meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                            if meta_price:
+                                price_value = await meta_price.get_attribute('content')
+                                if price_value:
+                                    try:
+                                        price_float = float(price_value)
+                                        if price_float > 0:
+                                            price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                            print(f"[DEBUG] Altınyıldız meta fiyat bulundu: {price}")
+                                    except:
+                                        pass
+                        except Exception as e:
+                            print(f"[DEBUG] Altınyıldız meta fiyat çekme hatası: {e}")
+                    
+                    # Meta'dan da bulunamadıysa DOM'dan çek
+                    if not price:
+                        # Altınyıldız fiyat selector'ları - öncelik sırasına göre
+                        altinyildiz_price_selectors = [
+                            'span[class*="price"]',
+                            'div[class*="price"]',
+                            '.price',
+                            'span.price',
+                            'div.price',
+                            '[class*="current-price"]',
+                            '[class*="sale-price"]',
+                            '[class*="final-price"]',
+                            '[itemprop="price"]'
+                        ]
+                        
+                        all_found_prices = []
+                        
+                        for selector in altinyildiz_price_selectors:
+                            try:
+                                price_elements = await page.query_selector_all(selector)
+                                for element in price_elements:
+                                    price_text = await element.text_content()
+                                    if price_text and price_text.strip():
+                                        price_text = price_text.strip()
+                                        print(f"[DEBUG] Altınyıldız price element text: '{price_text[:100]}...' (selector: {selector})")
+                                        
+                                        # Altınyıldız formatı: "899,99 TL 681,99 TL" (eski fiyat yeni fiyat yan yana)
+                                        # Tüm fiyatları bul (hem eski hem yeni)
+                                        all_price_matches = re.findall(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', price_text)
+                                        
+                                        if all_price_matches:
+                                            # Her fiyatı değerlendir
+                                            for price_match in all_price_matches:
+                                                try:
+                                                    # Fiyatı sayıya çevir (Türkçe format: 899,99)
+                                                    price_clean = price_match.replace('.', '').replace(',', '.')
+                                                    price_num = float(price_clean)
+                                                    
+                                                    # Mantıklı fiyat aralığı kontrolü (10 TL - 100.000 TL)
+                                                    if 10 <= price_num <= 100000:
+                                                        # Türkçe formatına çevir (899,99 TL)
+                                                        found_price = price_match + " TL"
+                                                        
+                                                        all_found_prices.append({
+                                                            'price': found_price,
+                                                            'price_num': price_num,
+                                                            'text': price_text,
+                                                            'selector': selector
+                                                        })
+                                                        print(f"[DEBUG] Altınyıldız fiyat adayı bulundu: {found_price} ({price_num} TL) (selector: {selector})")
+                                                except ValueError:
+                                                    continue
+                            except Exception as e:
+                                print(f"[DEBUG] Altınyıldız price selector hatası {selector}: {e}")
+                                continue
+                        
+                        # Fiyatları sayısal değere göre sırala
+                        if all_found_prices:
+                            all_found_prices.sort(key=lambda x: x['price_num'])
+                            
+                            # Eğer birden fazla fiyat varsa, en düşük olanı indirimli fiyat, en yüksek olanı eski fiyat
+                            if len(all_found_prices) > 1:
+                                # En düşük fiyat = indirimli fiyat
+                                selected = all_found_prices[0]
+                                price = selected['price']
+                                
+                                # En yüksek fiyat = eski fiyat
+                                old_price_selected = all_found_prices[-1]
+                                old_price_num = old_price_selected['price_num']
+                                
+                                # Türkçe formatına çevir (899,99 TL)
+                                if old_price_num >= 1000:
+                                    old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                else:
+                                    old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                
+                                print(f"[DEBUG] Altınyıldız indirimli fiyat seçildi: {price} (selector: {selected['selector']})")
+                                print(f"[DEBUG] Altınyıldız eski fiyat bulundu: {old_price} (selector: {old_price_selected['selector']})")
+                            else:
+                                # Tek fiyat varsa, onu kullan
+                                selected = all_found_prices[0]
+                                price = selected['price']
+                                old_price = None
+                                print(f"[DEBUG] Altınyıldız fiyat seçildi: {price} (selector: {selected['selector']})")
+                        else:
+                            print(f"[DEBUG] Altınyıldız hiç fiyat bulunamadı")
+                    
+                    # Eski fiyat çekme (eğer henüz bulunamadıysa)
+                    if not old_price and site_config and 'old_price_selectors' in site_config:
+                        for selector in site_config['old_price_selectors']:
+                            try:
+                                old_price_element = await page.query_selector(selector)
+                                if old_price_element:
+                                    old_price_text = await old_price_element.text_content()
+                                    if old_price_text and old_price_text.strip():
+                                        old_price_text = old_price_text.strip()
+                                        # Fiyat formatını parse et
+                                        old_price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', old_price_text)
+                                        if old_price_match:
+                                            old_price_str = old_price_match.group(1)
+                                            try:
+                                                old_price_clean = old_price_str.replace('.', '').replace(',', '.')
+                                                old_price_num = float(old_price_clean)
+                                                if 10 <= old_price_num <= 100000:
+                                                    if old_price_num >= 1000:
+                                                        old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    else:
+                                                        old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                                    print(f"[DEBUG] Altınyıldız eski fiyat bulundu: {old_price}")
+                                                    break
+                                            except ValueError:
+                                                continue
+                            except Exception as e:
+                                print(f"[DEBUG] Altınyıldız eski fiyat çekme hatası: {e}")
+                                continue
+                    
+                    if not old_price:
+                        print(f"[DEBUG] Altınyıldız eski fiyat bulunamadı")
+                
+                except Exception as e:
+                    print(f"[DEBUG] Altınyıldız özel fiyat çıkarma hatası: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    old_price = None
+            
+            else:
+                # Diğer siteler için genel yaklaşım
+                # Tüm fiyat elementlerini topla
+                for selector in site_config['price_selectors']:
+                    try:
+                        price_elements = await page.query_selector_all(selector)
+                        for element in price_elements:
+                            price_text = await element.text_content()
+                            if price_text and price_text.strip():
+                                # Fiyat temizleme
+                                price_text = price_text.strip()
+                                # Sayısal değerleri koru, virgül ve nokta işaretlerini koru
+                                clean_price = re.sub(r'[^\d,\.]', '', price_text)
+                                clean_price = clean_price.replace(',', '.')
+                                
+                                # Sayısal değer kontrolü
+                                if re.match(r'^\d+\.?\d*$', clean_price):
+                                    price_num = float(clean_price)
+                                    all_prices.append({
+                                        'value': price_num,
+                                        'text': price_text,
+                                        'element': element
+                                    })
+                    except Exception as e:
+                        print(f"[DEBUG] Price selector hatası {selector}: {e}")
+                        continue
+                
+                # Fiyatları sırala (en düşükten en yükseğe)
+                all_prices.sort(key=lambda x: x['value'])
+                
+                if all_prices:
+                    # En düşük fiyatı current price olarak al (indirimli fiyat genelde daha düşük)
+                    current_price = all_prices[0]
+                    price_num = current_price['value']
+                    
+                    # TL formatına çevir
+                    if price_num >= 1000:
+                        price = f"{price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                    else:
+                        price = f"{price_num:.2f} TL".replace('.', ',')
+                    print(f"[DEBUG] Site-specific current fiyat bulundu: {price}")
+                    
+                    # Eğer birden fazla fiyat varsa, en yüksek olanı old price olarak al
+                    if len(all_prices) > 1:
+                        old_price_data = all_prices[-1]
+                        old_price_num = old_price_data['value']
+                        
+                        # TL formatına çevir
+                        if old_price_num >= 1000:
+                            old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                        else:
+                            old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                        print(f"[DEBUG] Site-specific old fiyat bulundu: {old_price}")
+                    else:
+                        print(f"[DEBUG] Site-specific sadece 1 fiyat bulundu, old price yok")
+                        old_price = None
+        
+        # Eski fiyat çekme (sadece ayrı selector'lar varsa)
+        if site_config and 'old_price_selectors' in site_config and site_config['old_price_selectors']:
+            for selector in site_config['old_price_selectors']:
+                try:
+                    old_price_element = await page.query_selector(selector)
+                    if old_price_element:
+                        old_price_text = await old_price_element.text_content()
+                        if old_price_text and old_price_text.strip():
+                            # Fiyat temizleme ve TL ekleme
+                            old_price_text = old_price_text.strip()
+                            old_price_text = re.sub(r'[^\d,\.]', '', old_price_text)
+                            old_price_text = old_price_text.replace(',', '.')
+                            
+                            # Sayısal değer kontrolü
+                            if re.match(r'^\d+\.?\d*$', old_price_text):
+                                old_price_num = float(old_price_text)
+                                # TL formatına çevir
+                                if old_price_num >= 1000:
+                                    old_price = f"{old_price_num:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                else:
+                                    old_price = f"{old_price_num:.2f} TL".replace('.', ',')
+                                print(f"[DEBUG] Site-specific eski fiyat bulundu: {old_price}")
+                                break
+                except Exception as e:
+                    print(f"[DEBUG] Old price selector hatası {selector}: {e}")
+                    continue
+        
+        # Görsel çekme
+        if site_config and 'image_selectors' in site_config:
+            # Les Benjamins için özel görsel çekme mantığı
+            if "lesbenjamins.com" in url:
+                print(f"[DEBUG] Les Benjamins için özel görsel çekme başlıyor")
+                try:
+                    # Tüm potansiyel ürün görsellerini topla
+                    all_product_images = []
+                    
+                    # Öncelikli selector'lar (ürün gallery görselleri)
+                    priority_selectors = [
+                        ".product__media img",
+                        ".product-single__media img",
+                        ".product__media-wrapper img",
+                        ".product__photos img",
+                        "img.product__media-image",
+                        "img.product-single__media-image",
+                        "img[data-product-image]"
+                    ]
+                    
+                    for selector in priority_selectors:
+                        try:
+                            img_elements = await page.query_selector_all(selector)
+                            for img_element in img_elements:
+                                srcset = await img_element.get_attribute('srcset')
+                                src = await img_element.get_attribute('src')
+                                data_src = await img_element.get_attribute('data-src')
+                                
+                                # srcset'ten en yüksek kaliteli görseli al
+                                if srcset:
+                                    srcset_parts = srcset.split(',')
+                                    highest_res = None
+                                    max_width = 0
+                                    
+                                    for part in srcset_parts:
+                                        part = part.strip()
+                                        if ' ' in part:
+                                            url_part, size_part = part.rsplit(' ', 1)
+                                            if 'w' in size_part:
+                                                try:
+                                                    width = int(size_part.replace('w', ''))
+                                                    if width > max_width:
+                                                        max_width = width
+                                                        highest_res = url_part.strip()
+                                                except ValueError:
+                                                    continue
+                                    
+                                    if highest_res:
+                                        src = highest_res
+                                
+                                # data-src kontrolü (lazy loading)
+                                if data_src and not src:
+                                    src = data_src
+                                
+                                if src:
+                                    # Relative URL'yi absolute yap
+                                    if src.startswith('//'):
+                                        src = 'https:' + src
+                                    elif src.startswith('/'):
+                                        from urllib.parse import urlparse
+                                        parsed = urlparse(url)
+                                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                    
+                                    # Skip keyword kontrolü
+                                    skip_keywords = ['logo', 'banner', 'icon', 'header', 'footer', 'ad', 'promo', 'campaign', 'fw_25', 'first_drop']
+                                    src_lower = src.lower()
+                                    
+                                    if any(keyword in src_lower for keyword in skip_keywords):
+                                        continue
+                                    
+                                    # Les Benjamins domain kontrolü
+                                    if 'lesbenjamins.com/cdn/shop' in src:
+                                        # Dosya adı kontrolü
+                                        filename = src.split('/')[-1].split('?')[0]
+                                        # Ürün görseli genellikle ürün kodunu içerir veya sayısal ID içerir
+                                        if re.match(r'^[A-Z0-9_-]+\.(jpg|jpeg|webp|png)$', filename, re.IGNORECASE):
+                                            all_product_images.append({
+                                                'url': src,
+                                                'width': max_width if max_width > 0 else 0,
+                                                'selector': selector
+                                            })
+                                            print(f"[DEBUG] Les Benjamins ürün görseli adayı bulundu: {src} (width: {max_width})")
+                        except Exception as e:
+                            print(f"[DEBUG] Les Benjamins görsel selector hatası {selector}: {e}")
+                            continue
+                    
+                    # En uygun görseli seç
+                    if all_product_images:
+                        # Önce width'e göre sırala (en yüksek kalite)
+                        all_product_images.sort(key=lambda x: x['width'], reverse=True)
+                        
+                        # Aynı width'te birden fazla görsel varsa, ilk görseli seç (_1.jpg veya _1096_1.jpg gibi)
+                        # Dosya adında _1, _1096_1 gibi numaralar içeren görselleri tercih et
+                        max_width = all_product_images[0]['width']
+                        same_width_images = [img for img in all_product_images if img['width'] == max_width]
+                        
+                        # İlk görseli bul (_1.jpg veya _1096_1.jpg gibi)
+                        selected_image = None
+                        for img in same_width_images:
+                            filename = img['url'].split('/')[-1].split('?')[0]
+                            # İlk görsel genellikle _1.jpg veya _1096_1.jpg gibi numaralar içerir
+                            if re.search(r'[_-]1\.(jpg|jpeg|webp|png)$', filename, re.IGNORECASE):
+                                selected_image = img
+                                print(f"[DEBUG] Les Benjamins ilk görsel bulundu: {img['url']}")
+                                break
+                        
+                        # İlk görsel bulunamadıysa, en yüksek kaliteli ilk görseli seç
+                        if not selected_image:
+                            selected_image = same_width_images[0]
+                        
+                        image = selected_image['url']
+                        print(f"[DEBUG] Les Benjamins ürün görseli seçildi: {image} (width: {selected_image['width']})")
+                    else:
+                        print(f"[DEBUG] Les Benjamins hiç ürün görseli bulunamadı, fallback'e geçiliyor")
+                except Exception as e:
+                    print(f"[DEBUG] Les Benjamins özel görsel çekme hatası: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Altınyıldız Classics için özel görsel çekme mantığı
+            if "altinyildizclassics.com" in url:
+                print(f"[DEBUG] Altınyıldız Classics için özel görsel çekme başlıyor")
+                try:
+                    # Tüm potansiyel ürün görsellerini topla
+                    all_product_images = []
+                    
+                    # Öncelikli selector'lar - Altınyıldız'a özel
+                    priority_selectors = [
+                        # Ana ürün görseli selector'ları (en öncelikli)
+                        "img[alt*='resmi']",
+                        "img[alt*='Resmi']",
+                        "img[alt*='Kartlık resmi']",
+                        "img[alt*='kartlık resmi']",
+                        "img[alt*='Kartlik resmi']",
+                        "img[alt*='kartlik resmi']",
+                        # Ürün görseli container'ları
+                        ".product-image img",
+                        ".product__image img",
+                        ".product-gallery img",
+                        ".product-photos img",
+                        ".product-media img",
+                        ".product-slider img",
+                        ".product-carousel img",
+                        ".swiper-slide img",
+                        ".slick-slide img",
+                        # Genel ürün görseli class'ları
+                        "img.product-image",
+                        "img.product__image",
+                        "img[class*='product-image']",
+                        "img[class*='product__image']",
+                        "img[class*='gallery']",
+                        "img[class*='slider']",
+                        "img[class*='carousel']",
+                        "img[class*='media']",
+                        # Altınyıldız domain içeren görseller
+                        "img[src*='altinyildizclassics.com']",
+                        "img[srcset*='altinyildizclassics']",
+                        "img[data-src*='altinyildiz']",
+                        "img[data-lazy-src*='altinyildiz']",
+                        # Alt text'te ürün adı geçen görseller
+                        "img[alt*='Standart Fit']",
+                        "img[alt*='Sweatshirt']",
+                        "img[alt*='product']",
+                        "img[alt*='Product']",
+                        "img[title*='product']",
+                        "img[title*='Product']",
+                        # Genel görsel formatları
+                        "img[src*='.jpg']",
+                        "img[src*='.jpeg']",
+                        "img[src*='.webp']",
+                        "img[src*='.png']"
+                    ]
+                    
+                    for selector in priority_selectors:
+                        try:
+                            img_elements = await page.query_selector_all(selector)
+                            for img_element in img_elements:
+                                srcset = await img_element.get_attribute('srcset')
+                                src = await img_element.get_attribute('src')
+                                data_src = await img_element.get_attribute('data-src')
+                                data_lazy_src = await img_element.get_attribute('data-lazy-src')
+                                
+                                # srcset'ten en yüksek kaliteli görseli al
+                                if srcset:
+                                    srcset_parts = srcset.split(',')
+                                    highest_res = None
+                                    max_width = 0
+                                    
+                                    for part in srcset_parts:
+                                        part = part.strip()
+                                        if ' ' in part:
+                                            url_part, size_part = part.rsplit(' ', 1)
+                                            if 'w' in size_part:
+                                                try:
+                                                    width = int(size_part.replace('w', ''))
+                                                    if width > max_width:
+                                                        max_width = width
+                                                        highest_res = url_part.strip()
+                                                except ValueError:
+                                                    continue
+                                    
+                                    if highest_res:
+                                        src = highest_res
+                                
+                                # data-src ve data-lazy-src kontrolü (lazy loading)
+                                if data_lazy_src and not src:
+                                    src = data_lazy_src
+                                if data_src and not src:
+                                    src = data_src
+                                
+                                if src:
+                                    # Relative URL'yi absolute yap
+                                    if src.startswith('//'):
+                                        src = 'https:' + src
+                                    elif src.startswith('/'):
+                                        from urllib.parse import urlparse
+                                        parsed = urlparse(url)
+                                        src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                    
+                                    # Skip keyword kontrolü
+                                    skip_keywords = ['logo', 'banner', 'icon', 'header', 'footer', 'ad', 'promo', 'campaign']
+                                    src_lower = src.lower()
+                                    
+                                    if any(keyword in src_lower for keyword in skip_keywords):
+                                        continue
+                                    
+                                    # Görsel formatı kontrolü
+                                    if any(ext in src_lower for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                        # Alt text kontrolü - "resmi" içeren görselleri önceliklendir
+                                        alt_text = await img_element.get_attribute('alt') or ''
+                                        alt_text_lower = alt_text.lower()
+                                        
+                                        # Priority score hesapla
+                                        priority_score = 0
+                                        if 'resmi' in alt_text_lower:
+                                            priority_score += 100  # En yüksek öncelik
+                                        if 'kartlik' in alt_text_lower or 'kartlık' in alt_text_lower:
+                                            priority_score += 50
+                                        if max_width > 0:
+                                            priority_score += max_width / 10  # Width'e göre ek puan
+                                        
+                                        all_product_images.append({
+                                            'url': src,
+                                            'width': max_width if max_width > 0 else 0,
+                                            'selector': selector,
+                                            'priority': priority_score,
+                                            'alt': alt_text
+                                        })
+                                        print(f"[DEBUG] Altınyıldız ürün görseli adayı bulundu: {src} (width: {max_width}, priority: {priority_score}, alt: {alt_text})")
+                        except Exception as e:
+                            print(f"[DEBUG] Altınyıldız görsel selector hatası {selector}: {e}")
+                            continue
+                    
+                    # En uygun görseli seç
+                    if all_product_images:
+                        # Önce priority score'a göre sırala (en yüksek öncelik)
+                        all_product_images.sort(key=lambda x: x.get('priority', 0), reverse=True)
+                        
+                        # Eğer priority score'lar eşitse, width'e göre sırala
+                        max_priority = all_product_images[0].get('priority', 0)
+                        same_priority_images = [img for img in all_product_images if img.get('priority', 0) == max_priority]
+                        if len(same_priority_images) > 1:
+                            same_priority_images.sort(key=lambda x: x['width'], reverse=True)
+                        
+                        # En yüksek öncelikli görseli seç
+                        selected_image = same_priority_images[0] if same_priority_images else all_product_images[0]
+                        image = selected_image['url']
+                        print(f"[DEBUG] Altınyıldız ürün görseli seçildi: {image} (width: {selected_image['width']}, priority: {selected_image.get('priority', 0)}, alt: {selected_image.get('alt', '')})")
+                    else:
+                        print(f"[DEBUG] Altınyıldız hiç ürün görseli bulunamadı, fallback'e geçiliyor")
+                        
+                        # Fallback: Tüm img elementlerini kontrol et
+                        try:
+                            all_imgs = await page.query_selector_all('img')
+                            for img in all_imgs:
+                                src = await img.get_attribute('src')
+                                if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                    # Skip keyword kontrolü
+                                    skip_keywords = ['logo', 'banner', 'icon', 'header', 'footer', 'ad', 'promo', 'campaign']
+                                    if not any(keyword in src.lower() for keyword in skip_keywords):
+                                        # Relative URL'yi absolute yap
+                                        if src.startswith('//'):
+                                            src = 'https:' + src
+                                        elif src.startswith('/'):
+                                            from urllib.parse import urlparse
+                                            parsed = urlparse(url)
+                                            src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                        
+                                        image = src
+                                        print(f"[DEBUG] Altınyıldız fallback görsel bulundu: {image}")
+                                        break
+                        except Exception as e:
+                            print(f"[DEBUG] Altınyıldız fallback görsel çekme hatası: {e}")
+                except Exception as e:
+                    print(f"[DEBUG] Altınyıldız özel görsel çekme hatası: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Diğer siteler için normal görsel çekme
+            if not image:
+                for selector in site_config['image_selectors']:
+                    try:
+                        img_element = await page.query_selector(selector)
+                        if img_element:
+                            # Önce srcset'i kontrol et (daha yüksek kalite için)
+                            srcset = await img_element.get_attribute('srcset')
+                            src = await img_element.get_attribute('src')
+                            
+                            # Diğer siteler için genel srcset işleme
+                            if srcset:
+                                srcset_parts = srcset.split(',')
+                                highest_res = None
+                                max_width = 0
+                                
+                                for part in srcset_parts:
+                                    part = part.strip()
+                                    if ' ' in part:
+                                        url_part, size_part = part.rsplit(' ', 1)
+                                        if 'w' in size_part:
+                                            width = int(size_part.replace('w', ''))
+                                            if width > max_width:
+                                                max_width = width
+                                                highest_res = url_part.strip()
+                                
+                                if highest_res:
+                                    src = highest_res
+                        
+                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                            # Relative URL'yi absolute yap
+                            if src.startswith('//'):
+                                src = 'https:' + src
+                            elif src.startswith('/'):
+                                from urllib.parse import urlparse
+                                parsed = urlparse(url)
+                                src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                            
+                            # Sportime/Shopify için özel görsel işleme
+                            if "sportime.com.tr" in url or "shopify" in src.lower():
+                                    # data-src kontrolü (lazy loading)
+                                    data_src = await img_element.get_attribute('data-src')
+                                    if data_src and any(ext in data_src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                        if not any(skip in data_src.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer', 'ad']):
+                                            src = data_src
+                                            print(f"[DEBUG] Sportime data-src görsel bulundu: {src}")
+                                    
+                                    # Width parametresini düzelt
+                                    if 'width=' in src or '&width=' in src:
+                                        width_match = re.search(r'[?&]width=(\d+)', src)
+                                        if width_match:
+                                            width_value = int(width_match.group(1))
+                                            if width_value < 500:  # 500'den küçükse düzelt
+                                                src = re.sub(r'[?&]width=\d+', '', src)
+                                                if '?' in src:
+                                                    src += '&width=1000'
+                                                else:
+                                                    src += '?width=1000'
+                                                print(f"[DEBUG] Sportime görsel width parametresi düzeltildi: {width_value} -> 1000")
+                                    
+                                    # Shopify CDN URL'lerini optimize et
+                                    if 'cdn.shopify.com' in src or 'sportime.com.tr/cdn' in src:
+                                        # Width parametresi yoksa ekle
+                                        if 'width=' not in src and '&width=' not in src:
+                                            if '?' in src:
+                                                src += '&width=1000'
+                                            else:
+                                                src += '?width=1000'
+                                            print(f"[DEBUG] Sportime görsel width parametresi eklendi: 1000")
+                                
+                            # Les Benjamins için URL optimizasyonu
+                            elif "lesbenjamins.com" in url and 'width=' in src:
+                                # width parametresini daha yüksek değerle değiştir
+                                src = re.sub(r'width=\d+', 'width=1400', src)
+                                print(f"[DEBUG] Les Benjamins görsel URL'si optimize edildi: {src}")
+                            elif 'w=' in src and 'h=' in src:
+                                # Diğer siteler için boyut parametrelerini optimize et
+                                src = re.sub(r'w=\d+', 'w=800', src)
+                                src = re.sub(r'h=\d+', 'h=1200', src)
+                            
+                            image = src
+                            print(f"[DEBUG] Site-specific görsel bulundu: {image}")
+                            break
+                    except Exception as e:
+                        print(f"[DEBUG] Image selector hatası {selector}: {e}")
+                        continue
+    
+    except Exception as e:
+        print(f"[HATA] Site-specific extraction hatası: {e}")
+    
+    return title, price, old_price, image
+
+def get_cache_key(url):
+    """URL için cache key oluştur"""
+    return hashlib.md5(url.encode()).hexdigest()
+
+def get_cached_result(url):
+    """Cache'den sonuç al"""
+    cache_key = get_cache_key(url)
+    if cache_key in scraping_cache:
+        cached_data, timestamp = scraping_cache[cache_key]
+        if time.time() - timestamp < CACHE_DURATION:
+            return cached_data
+    return None
+
+def set_cached_result(url, data):
+    """Sonucu cache'e kaydet"""
+    cache_key = get_cache_key(url)
+    scraping_cache[cache_key] = (data, time.time())
+
+def extract_domain_from_url(url):
+    """URL'den domain çıkar"""
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        # www. prefix'ini kaldır
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        return domain
+    except:
+        return None
+
+def load_dynamic_brands():
+    """Dinamik olarak eklenen markaları yükle"""
+    try:
+        if os.path.exists(BRANDS_FILE):
+            with open(BRANDS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[HATA] Dinamik markalar yüklenemedi: {e}")
+    return []
+
+def save_dynamic_brands(brands):
+    """Dinamik markaları kaydet"""
+    try:
+        with open(BRANDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(brands, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[HATA] Dinamik markalar kaydedilemedi: {e}")
+
+def add_brand_automatically(domain):
+    """Yeni markayı otomatik olarak ekle"""
+    if not domain:
+        return None
+    
+    # Domain'den marka adını oluştur
+    brand_name = domain.split('.')[0].title()
+    
+    # Özel durumlar için düzeltmeler
+    brand_mappings = {
+        'kaft': 'Kaft',
+        'mavi': 'Mavi',
+        'zara': 'Zara',
+        'mango': 'Mango',
+        'bershka': 'Bershka',
+        'pullandbear': 'Pull&Bear',
+        'boyner': 'Boyner',
+        'catiuniform': 'Çatı Uniform',
+        'ontrailstore': 'Ontrail Store',
+        'wwfmarket': 'WWF Market',
+        'superstep': 'Superstep',
+        'kigili': 'Kigili',
+        'jackjones': 'Jack & Jones',
+        'selected': 'Selected',
+        'vakko': 'Vakko',
+        'beymen': 'Beymen',
+        'neta-porter': 'Net-a-Porter',
+        'farfetch': 'Farfetch',
+        'asos': 'ASOS',
+        'zalando': 'Zalando',
+        'uniqlo': 'Uniqlo',
+        'gap': 'Gap',
+        'oldnavy': 'Old Navy',
+        'bananarepublic': 'Banana Republic',
+        'tommyhilfiger': 'Tommy Hilfiger',
+        'calvinklein': 'Calvin Klein',
+        'levis': 'Levi\'s'
+    }
+    
+    # Özel mapping varsa kullan
+    if domain.split('.')[0].lower() in brand_mappings:
+        brand_name = brand_mappings[domain.split('.')[0].lower()]
+    
+    # Dinamik markaları yükle
+    dynamic_brands = load_dynamic_brands()
+    
+    # Marka zaten var mı kontrol et
+    for existing_domain, existing_name in dynamic_brands:
+        if existing_domain == domain:
+            return existing_name
+    
+    # Yeni markayı ekle
+    new_brand = (domain, brand_name)
+    dynamic_brands.append(new_brand)
+    save_dynamic_brands(dynamic_brands)
+    
+    print(f"[YENİ MARKA] Otomatik olarak eklendi: {domain} -> {brand_name}")
+    return brand_name
+
+def detect_brand_from_url(url):
+    """URL'den marka tespit et"""
+    domain = extract_domain_from_url(url)
+    if not domain:
+        return "Bilinmiyor"
+    
+    # Önce sabit BRANDS listesinde ara
+    for brand_domain, brand_name in BRANDS:
+        if brand_domain in domain:
+            return brand_name
+    
+    # Dinamik markalarda ara
+    dynamic_brands = load_dynamic_brands()
+    for brand_domain, brand_name in dynamic_brands:
+        if brand_domain in domain:
+            return brand_name
+    
+    # Marka bulunamadı, otomatik ekle
+    new_brand_name = add_brand_automatically(domain)
+    if new_brand_name:
+        return new_brand_name
+    
+    return "Bilinmiyor"
+
+# Login manager
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# CSP Headers
+@app.after_request
+def add_security_headers(response):
+    response.headers['Content-Security-Policy'] = "default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'"
+    return response
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.get_by_id(user_id)
+
+# Veritabanını başlat
+init_db()
+
+BRANDS = [
+    ("koton.com", "Koton"),
+    ("ltbjeans.com", "LTB Jeans"),
+    ("colins.com.tr", "Colin's"),
+    ("defacto.com.tr", "Defacto"),
+    ("boyner.com.tr", "Boyner"),
+    ("superstep.com.tr", "Superstep"),
+    ("catiuniform.com", "Çatı Uniform"),
+    ("oysho.com", "Oysho"),
+    ("mango.com", "Mango"),
+    ("zara.com", "Zara"),
+    ("bershka.com", "Bershka"),
+    ("stradivarius.com", "Stradivarius"),
+    ("pullandbear.com", "Pull&Bear"),
+    ("hm.com", "H&M"),
+    ("lcwaikiki.com", "LC Waikiki"),
+    ("trendyol.com", "Trendyol"),
+    ("adidas.com.tr", "Adidas"),
+    ("nike.com", "Nike"),
+    ("penti.com", "Penti"),
+    ("mavi.com", "Mavi"),
+    ("kigili.com", "Kigili"),
+    ("kaft.com", "Kaft"),
+    ("jackjones.com", "Jack & Jones"),
+    ("selected.com", "Selected"),
+    ("lesbenjamins.com", "Les Benjamins"),
+    ("vakko.com", "Vakko"),
+    ("beymen.com", "Beymen"),
+    ("net-a-porter.com", "Net-a-Porter"),
+    ("farfetch.com", "Farfetch"),
+    ("asos.com", "ASOS"),
+    ("zalando.com", "Zalando"),
+    ("uniqlo.com", "Uniqlo"),
+    ("gap.com", "Gap"),
+    ("oldnavy.com", "Old Navy"),
+    ("bananarepublic.com", "Banana Republic"),
+    ("tommyhilfiger.com", "Tommy Hilfiger"),
+    ("calvinklein.com", "Calvin Klein"),
+    ("levis.com", "Levi's"),
+    ("wrangler.com", "Wrangler"),
+    ("diesel.com", "Diesel"),
+    ("guess.com", "Guess"),
+    ("esprit.com", "Esprit"),
+    ("benetton.com", "Benetton"),
+    ("sandro.com", "Sandro"),
+    ("maje.com", "Maje"),
+    ("claudiepierlot.com", "Claudie Pierlot"),
+    ("comptoir-des-cotonniers.com", "Comptoir des Cotonniers"),
+    ("promod.com", "Promod"),
+    ("jennyfer.com", "Jennyfer"),
+    ("pimkie.com", "Pimkie"),
+    ("etam.com", "Etam"),
+    ("cache-cache.com", "Cache Cache"),
+    ("devred.com", "Devred"),
+    ("camaieu.com", "Camaieu"),
+    ("kiabi.com", "Kiabi"),
+    ("camaieu.com", "Camaieu"),
+    ("devred.com", "Devred"),
+    ("cache-cache.com", "Cache Cache"),
+    ("etam.com", "Etam"),
+    ("pimkie.com", "Pimkie"),
+    ("jennyfer.com", "Jennyfer"),
+    ("promod.com", "Promod"),
+    ("comptoir-des-cotonniers.com", "Comptoir des Cotonniers"),
+    ("maje.com", "Maje"),
+    ("sandro.com", "Sandro"),
+    ("benetton.com", "Benetton"),
+    ("esprit.com", "Esprit"),
+    ("guess.com", "Guess"),
+    ("diesel.com", "Diesel"),
+    ("wrangler.com", "Wrangler"),
+    ("levis.com", "Levi's"),
+    ("calvinklein.com", "Calvin Klein"),
+    ("tommyhilfiger.com", "Tommy Hilfiger"),
+    ("bananarepublic.com", "Banana Republic"),
+    ("oldnavy.com", "Old Navy"),
+    ("gap.com", "Gap"),
+    ("uniqlo.com", "Uniqlo"),
+    ("zalando.com", "Zalando"),
+    ("asos.com", "ASOS"),
+    ("farfetch.com", "Farfetch"),
+    ("net-a-porter.com", "Net-a-Porter"),
+    ("beymen.com", "Beymen"),
+    ("vakko.com", "Vakko"),
+    ("selected.com", "Selected"),
+    ("jackjones.com", "Jack & Jones"),
+    ("kigili.com", "Kigili"),
+]
+
+async def scrape_product(url):
+    print(f"[DEBUG] Scraping başlıyor: {url}")
+    
+    # Check cache
+    cached_data = get_cached_result(url)
+    if cached_data:
+        print(f"[DEBUG] Cache'ten veri alındı: {url}")
+        return cached_data
+    
+    # Dinamik marka tespiti
+    brand = detect_brand_from_url(url)
+    print(f"[DEBUG] Tespit edilen marka: {brand}")
+    
+    # Site-specific debugging
+    if "pullandbear.com" in url:
+        print(f"[DEBUG] Pull&Bear scraping başlıyor")
+    elif "lesbenjamins.com" in url:
+        print(f"[DEBUG] Les Benjamins scraping başlıyor")
+    elif "wwfmarket.com" in url:
+        print(f"[DEBUG] WWF Market scraping başlıyor")
+    
+    # Render'da headless mode kullan
+    headless = True
+    if os.environ.get('RENDER') or os.environ.get('PORT'):
+        headless = True
+    
+    try:
+        async with async_playwright() as p:
+            # Browser'ı başlat - Production ayarları
+            browser = await p.chromium.launch(
+                headless=True,  # Her zaman headless kullan
+                args=[
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-gpu',
+                    '--disable-plugins',
+                    '--disable-extensions',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=TranslateUI',
+                    '--disable-ipc-flooding-protection',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-default-apps',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--hide-scrollbars',
+                    '--mute-audio',
+                    '--no-default-browser-check',
+                    '--no-pings',
+                    '--disable-prompt-on-repost',
+                    '--disable-hang-monitor',
+                    '--disable-client-side-phishing-detection',
+                    '--disable-component-update',
+                    '--disable-domain-reliability',
+                    '--disable-features=AudioServiceOutOfProcess',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-background-networking',
+                ]
+            )
+            
+            try:
+                # Context oluştur - Boyner'de çalışan ayarlar
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='tr-TR',
+                    timezone_id='Europe/Istanbul',
+                    extra_http_headers={
+                        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Referer': 'https://www.google.com/',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Cache-Control': 'max-age=0',
+                        'DNT': '1',
+                        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"',
+                    }
+                )
+                
+                # Sayfa oluştur
+                page = await context.new_page()
+                
+                # Bot korumasını aşmak için stealth script'ler - Boyner'de çalışan
+                await page.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined,
+                    });
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5],
+                    });
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['tr-TR', 'tr', 'en-US', 'en'],
+                    });
+                    Object.defineProperty(navigator, 'permissions', {
+                        get: () => ({
+                            query: async () => ({ state: 'granted' })
+                        }),
+                    });
+                    window.chrome = {
+                        runtime: {},
+                    };
+                """)
+                
+                # Site-specific navigation - Boyner'deki başarılı yaklaşım
+                try:
+                    if "mango.com" in url:
+                        print(f"[DEBUG] Mango için özel navigation başlıyor")
+                        # Mango için daha agresif bot koruması aşma
+                        await page.goto("https://shop.mango.com/tr", wait_until="domcontentloaded", timeout=20000)
+                        await page.wait_for_timeout(5000)
+                        
+                        # Mango için özel stealth script
+                        await page.add_init_script("""
+                            // Mango için özel bot koruması aşma
+                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                            Object.defineProperty(navigator, 'languages', { get: () => ['tr-TR', 'tr', 'en-US', 'en'] });
+                            Object.defineProperty(navigator, 'permissions', { get: () => ({ query: async () => ({ state: 'granted' }) }) });
+                            window.chrome = { runtime: {} };
+                            
+                            // Mango için özel user agent
+                            Object.defineProperty(navigator, 'userAgent', {
+                                get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                            });
+                            
+                            // Mango için özel screen properties
+                            Object.defineProperty(screen, 'width', { get: () => 1920 });
+                            Object.defineProperty(screen, 'height', { get: () => 1080 });
+                            Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+                            Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+                        """)
+                        
+                        # Mango için ek bekleme
+                        await page.wait_for_timeout(3000)
+                        
+                    elif "zara.com" in url:
+                        await page.goto("https://www.zara.com/tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "bershka.com" in url:
+                        await page.goto("https://www.bershka.com/tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "boyner.com.tr" in url:
+                        await page.goto("https://www.boyner.com.tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "pullandbear.com" in url:
+                        await page.goto("https://www.pullandbear.com/tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "lesbenjamins.com" in url:
+                        await page.goto("https://lesbenjamins.com/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "wwfmarket.com" in url:
+                        await page.goto("https://wwfmarket.com/tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "spx.com.tr" in url:
+                        await page.goto("https://www.spx.com.tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                    elif "sportime.com.tr" in url:
+                        await page.goto("https://sportime.com.tr/", wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(3000)
+                except Exception as e:
+                    print(f"[DEBUG] Site-specific navigation hatası: {e}")
+                    pass
+                
+                # Ürün sayfasına git - Boyner'deki başarılı timeout
+                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(5000)
+                
+                # SPX.com.tr için ekstra bekleme (JavaScript yüklenmesi için)
+                if "spx.com.tr" in url:
+                    await page.wait_for_timeout(5000)
+                    # Fiyat elementinin yüklenmesini bekle
+                    try:
+                        await page.wait_for_selector('[class*="price"], .price, [data-price]', timeout=10000)
+                    except:
+                        pass
+                
+                # Sportime.com.tr için ekstra bekleme (JavaScript yüklenmesi için)
+                if "sportime.com.tr" in url:
+                    await page.wait_for_timeout(5000)
+                    # Fiyat elementinin yüklenmesini bekle
+                    try:
+                        await page.wait_for_selector('[class*="price"], .price, [data-price], span.price', timeout=10000)
+                    except:
+                        pass
+                
+                # Altınyıldız Classics için ekstra bekleme (Görsellerin yüklenmesi için)
+                if "altinyildizclassics.com" in url:
+                    await page.wait_for_timeout(5000)
+                    # Görsel elementlerinin yüklenmesini bekle
+                    try:
+                        await page.wait_for_selector('img[src*="altinyildiz"], img[srcset*="altinyildiz"], img[data-src*="altinyildiz"]', timeout=10000)
+                    except:
+                        pass
+                
+                # Sayfanın tam yüklenmesini bekle - Boyner'deki başarılı yaklaşım
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                except:
+                    pass
+                
+                # Ek bekleme - Boyner'deki başarılı süre
+                await page.wait_for_timeout(3000)
+                
+                # Site-specific konfigürasyonu al ve veri çek
+                site_config = get_site_config(url)
+                if site_config:
+                    print(f"[DEBUG] Site-specific konfigürasyon kullanılıyor")
+                    site_title, site_price, site_old_price, site_image = await extract_with_site_config(page, url, site_config)
+                else:
+                    site_title, site_price, site_old_price, site_image = None, None, None, None
+                
+                # Universal scraper'ı kullan (site-specific yoksa veya eksik veri varsa)
+                if UNIVERSAL_SCRAPER_AVAILABLE and universal_scraper:
+                    use_universal = not site_config or not site_title or not site_price or not site_image
+                    if use_universal:
+                        print(f"[DEBUG] Universal scraper kullanılıyor (site-specific yok veya eksik veri)")
+                        try:
+                            uni_title = await universal_scraper.extract_title(page)
+                            uni_price, uni_old_price = await universal_scraper.extract_price(page, url)
+                            uni_image, uni_images = await universal_scraper.extract_image(page, url)
+                            
+                            # Site-specific verileri universal verilerle birleştir (öncelik site-specific'te)
+                            if not site_title and uni_title:
+                                site_title = uni_title
+                                print(f"[DEBUG] Universal scraper'dan başlık alındı: {site_title}")
+                            if not site_price and uni_price:
+                                site_price = uni_price
+                                print(f"[DEBUG] Universal scraper'dan fiyat alındı: {site_price}")
+                            if not site_old_price and uni_old_price:
+                                site_old_price = uni_old_price
+                                print(f"[DEBUG] Universal scraper'dan eski fiyat alındı: {site_old_price}")
+                            if not site_image and uni_image:
+                                site_image = uni_image
+                                print(f"[DEBUG] Universal scraper'dan görsel alındı: {site_image}")
+                        except Exception as e:
+                            print(f"[DEBUG] Universal scraper hatası: {e}")
+                            import traceback
+                            traceback.print_exc()
+                
+                # Başlık çek - Boyner'deki başarılı selectors
+                title = None
+                try:
+                    title_selectors = [
+                        'h1[data-testid="product-detail-name"]',
+                        'h1.product-name',
+                        'h1.product-title',
+                        'h1.title',
+                        'h1',
+                        'title'
+                    ]
+                    
+                    for selector in title_selectors:
+                        try:
+                            if selector == 'title':
+                                title_element = await page.query_selector('title')
+                                if title_element:
+                                    title = await title_element.text_content()
+                            else:
+                                title_element = await page.query_selector(selector)
+                                if title_element:
+                                    title = await title_element.text_content()
+                            
+                            if title and title.strip():
+                                title = title.strip().upper()
+                                title = re.sub(r'[^\w\s\-\.]', '', title)
+                                title = re.sub(r'\s+', ' ', title).strip()
+                                break
+                        except:
+                            continue
+                    
+                    # Site-specific başlık varsa kullan
+                    if site_title:
+                        title = site_title
+                        print(f"[DEBUG] Site-specific başlık kullanıldı: {title}")
+                    elif not title:
+                        title = "Başlık bulunamadı"
+                    
+                    # Mango için özel başlık çekme
+                    if "mango.com" in url and (not title or title == "Başlık bulunamadı" or "ACCESS DENIED" in title):
+                        print(f"[DEBUG] Mango için özel başlık çekme başlıyor")
+                        try:
+                            # Mango için özel başlık selector'ları
+                            mango_title_selectors = [
+                                'h1[class*="product"]',
+                                'h1[class*="title"]',
+                                'h1[class*="name"]',
+                                'h1',
+                                'title',
+                                '[data-testid*="product"]',
+                                '[data-testid*="title"]',
+                                '[class*="product-name"]',
+                                '[class*="product-title"]'
+                            ]
+                            
+                            for selector in mango_title_selectors:
+                                try:
+                                    if selector == 'title':
+                                        title_element = await page.query_selector('title')
+                                        if title_element:
+                                            title_text = await title_element.text_content()
+                                    else:
+                                        title_element = await page.query_selector(selector)
+                                        if title_element:
+                                            title_text = await title_element.text_content()
+                                    
+                                    if title_text and title_text.strip() and "ACCESS DENIED" not in title_text:
+                                        title = title_text.strip().upper()
+                                        title = re.sub(r'[^\w\s\-\.]', '', title)
+                                        title = re.sub(r'\s+', ' ', title).strip()
+                                        print(f"[DEBUG] Mango başlık bulundu: {title}")
+                                        break
+                                except Exception as e:
+                                    print(f"[DEBUG] Mango title selector hatası {selector}: {e}")
+                                    continue
+                        except Exception as e:
+                            print(f"[DEBUG] Mango özel başlık çekme hatası: {e}")
+                    
+
+                    
+                    # Site-spesifik başlık çekme
+                    if not title or title == "Başlık bulunamadı":
+                        if "catiuniform.com" in url:
+                            # Çatı Uniform için özel başlık selector'ları
+                            cati_title_selectors = [
+                                'h1.product-name',
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title'
+                            ]
+                            for selector in cati_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "mavi.com" in url:
+                            # Mavi için özel başlık selector'ları
+                            mavi_title_selectors = [
+                                'h1[data-testid="product-title"]',
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title'
+                            ]
+                            for selector in mavi_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "ontrailstore.com" in url:
+                            # Ontrail Store için özel başlık selector'ları
+                            ontrail_title_selectors = [
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title'
+                            ]
+                            for selector in ontrail_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "wwfmarket.com" in url:
+                            # WWF Market için özel başlık selector'ları
+                            wwf_title_selectors = [
+                                'h1.product-name',
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title',
+                                '.product-detail-name',
+                                '[data-testid="product-title"]'
+                            ]
+                            for selector in wwf_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "pullandbear.com" in url:
+                            # Pull&Bear için özel başlık selector'ları
+                            pullandbear_title_selectors = [
+                                'h1[data-testid="product-detail-name"]',
+                                'h1.product-name',
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title',
+                                '.product-detail-name',
+                                '[data-testid="product-title"]'
+                            ]
+                            for selector in pullandbear_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "lesbenjamins.com" in url:
+                            # Les Benjamins için özel başlık selector'ları
+                            lesbenjamins_title_selectors = [
+                                'h1.product-title',
+                                'h1.product-name',
+                                'h1.title',
+                                '.product-title',
+                                '.product-name',
+                                '.product-detail-name',
+                                '[data-testid="product-title"]',
+                                '.product__title'
+                            ]
+                            for selector in lesbenjamins_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "superstep.com.tr" in url:
+                            # Superstep için özel başlık selector'ları
+                            superstep_title_selectors = [
+                                'h1.product-name',
+                                'h1.product-title',
+                                'h1.title',
+                                '.product-name',
+                                '.product-title'
+                            ]
+                            for selector in superstep_title_selectors:
+                                try:
+                                    title_element = await page.query_selector(selector)
+                                    if title_element:
+                                        title = await title_element.text_content()
+                                        if title and title.strip():
+                                            title = title.strip().upper()
+                                            title = re.sub(r'[^\w\s\-\.]', '', title)
+                                            title = re.sub(r'\s+', ' ', title).strip()
+                                            break
+                                except:
+                                    continue
+                        
+                except Exception as e:
+                    print(f"[HATA] Başlık çekilemedi: {e}")
+                    title = "Başlık bulunamadı"
+
+                # Görsel çek - Gelişmiş yaklaşım (tüm görselleri topla)
+                image = None
+                images = []  # Tüm görselleri buraya topla
+                try:
+                    # Önce ürün görseli için özel selector'ları dene
+                    product_img_selectors = [
+                        'img[data-testid="product-detail-image"]',
+                        'img[data-testid="product-image"]',
+                        'img.product-detail-image',
+                        'img.product-main-image',
+                        'img.main-product-image',
+                        'img[class*="product"][class*="image"]',
+                        'img[class*="main"][class*="image"]',
+                        'img[class*="detail"][class*="image"]',
+                        'img[alt*="ürün"]',
+                        'img[alt*="product"]',
+                        'img[alt*="main"]',
+                        'img[alt*="detail"]'
+                    ]
+                    
+                    # Ürün görseli için özel arama
+                    for selector in product_img_selectors:
+                        try:
+                            img_elements = await page.query_selector_all(selector)
+                            for img in img_elements:
+                                src = await img.get_attribute('src')
+                                srcset = await img.get_attribute('srcset')
+                                alt = await img.get_attribute('alt') or ''
+                                
+                                # Ürün görseli olup olmadığını kontrol et
+                                if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                    # Logo, icon gibi küçük görselleri filtrele
+                                    if not any(skip in src.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer']):
+                                        # Boyut kontrolü (çok küçük görselleri filtrele)
+                                        try:
+                                            size = await img.bounding_box()
+                                            if size and size['width'] > 100 and size['height'] > 100:
+                                                # İlk görseli ana görsel olarak ayarla
+                                                if not image:
+                                                    image = src
+                                                # Tüm görselleri listeye ekle (tekrar yoksa)
+                                                if src not in images:
+                                                    images.append(src)
+                                                break
+                                        except:
+                                            if not image:
+                                                image = src
+                                            if src not in images:
+                                                images.append(src)
+                                            break
+                                
+                                # srcset kontrolü - tüm görselleri topla
+                                if srcset:
+                                    srcset_urls = srcset.split(',')
+                                    for srcset_url in srcset_urls:
+                                        url_part = srcset_url.strip().split(' ')[0]
+                                        if any(ext in url_part.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            if not any(skip in url_part.lower() for skip in ['logo', 'icon', 'banner']):
+                                                if not image:
+                                                    image = url_part
+                                                if url_part not in images:
+                                                    images.append(url_part)
+                                
+                                if image:
+                                    break
+                            
+                            if image:
+                                break
+                        except:
+                            continue
+                    
+                    # Eğer ürün görseli bulunamadıysa, genel görsel arama
+                    if not image:
+                        general_img_selectors = [
+                            'img[src*=".jpg"]',
+                            'img[src*=".jpeg"]',
+                            'img[src*=".webp"]',
+                            'img[src*=".png"]'
+                        ]
+                        
+                        for selector in general_img_selectors:
+                            try:
+                                img_elements = await page.query_selector_all(selector)
+                                for img in img_elements:
+                                    src = await img.get_attribute('src')
+                                    
+                                    if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                        # Filtreleme
+                                        if not any(skip in src.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer', 'ad', 'ads']):
+                                            # Boyut kontrolü
+                                            try:
+                                                size = await img.bounding_box()
+                                                if size and size['width'] > 150 and size['height'] > 150:
+                                                    if not image:
+                                                        image = src
+                                                    if src not in images:
+                                                        images.append(src)
+                                                    break
+                                            except:
+                                                if not image:
+                                                    image = src
+                                                if src not in images:
+                                                    images.append(src)
+                                                break
+                                
+                                if image:
+                                    break
+                            except:
+                                continue
+                    
+                    # Site-spesifik görsel çekme
+                    if not image:
+                        if "mango.com" in url:
+                            # Mango için özel selector'lar
+                            print(f"[DEBUG] Mango için özel görsel çekme başlıyor")
+                            mango_selectors = [
+                                'img[src*="shop.mango.com/assets"]',
+                                'img[srcset*="shop.mango.com/assets"]',
+                                'img[data-nimg="1"]',
+                                'img[style*="color:transparent"]',
+                                'img[decoding="async"]',
+                                'img[class*="ImageGridItem"]',
+                                'img[class*="image"]',
+                                'img[data-testid="product-image"]',
+                                'img[class*="product"]',
+                                'img[src*="mango"]'
+                            ]
+                            for selector in mango_selectors:
+                                try:
+                                    img_elements = await page.query_selector_all(selector)
+                                    for img in img_elements:
+                                        # Önce srcset'i kontrol et
+                                        srcset = await img.get_attribute('srcset')
+                                        src = await img.get_attribute('src')
+                                        
+                                        # srcset'ten en yüksek kaliteli görseli al
+                                        if srcset:
+                                            srcset_parts = srcset.split(',')
+                                            highest_res = None
+                                            max_width = 0
+                                            
+                                            for part in srcset_parts:
+                                                part = part.strip()
+                                                if ' ' in part:
+                                                    url_part, size_part = part.rsplit(' ', 1)
+                                                    if 'w' in size_part:
+                                                        width = int(size_part.replace('w', ''))
+                                                        if width > max_width:
+                                                            max_width = width
+                                                            highest_res = url_part.strip()
+                                            
+                                            if highest_res:
+                                                src = highest_res
+                                        
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            # Relative URL'yi absolute yap
+                                            if src.startswith('//'):
+                                                src = 'https:' + src
+                                            elif src.startswith('/'):
+                                                from urllib.parse import urlparse
+                                                parsed = urlparse(url)
+                                                src = f"{parsed.scheme}://{parsed.netloc}{src}"
+                                            
+                                            # URL'deki boyut parametrelerini optimize et
+                                            if 'w=' in src and 'h=' in src:
+                                                src = re.sub(r'w=\d+', 'w=800', src)
+                                                src = re.sub(r'h=\d+', 'h=1200', src)
+                                            
+                                            if not image:
+                                                image = src
+                                            if src not in images:
+                                                images.append(src)
+                                            print(f"[DEBUG] Mango görsel bulundu: {src}")
+                                            # Tüm görselleri toplamak için devam et
+                                    # Tüm görselleri topladıktan sonra devam et
+                                except Exception as e:
+                                    print(f"[DEBUG] Mango image selector hatası {selector}: {e}")
+                                    continue
+                        
+                        elif "bershka.com" in url:
+                            # Bershka için özel selector'lar
+                            bershka_selectors = [
+                                'img[data-testid="product-image"]',
+                                'img[class*="product"]',
+                                'img[src*="bershka"]'
+                            ]
+                            for selector in bershka_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "catiuniform.com" in url:
+                            # Çatı Uniform için özel selector'lar
+                            cati_selectors = [
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="catiuniform"]',
+                                'img[alt*="ürün"]',
+                                'img[alt*="product"]'
+                            ]
+                            for selector in cati_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "mavi.com" in url:
+                            # Mavi için özel selector'lar
+                            mavi_selectors = [
+                                'img[data-testid="product-image"]',
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="mavi"]',
+                                'img[alt*="ürün"]'
+                            ]
+                            for selector in mavi_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "ontrailstore.com" in url:
+                            # Ontrail Store için özel selector'lar
+                            ontrail_selectors = [
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="ontrail"]',
+                                'img[alt*="product"]',
+                                'img[alt*="ürün"]'
+                            ]
+                            for selector in ontrail_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "wwfmarket.com" in url:
+                            # WWF Market için özel selector'lar
+                            wwf_selectors = [
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="wwfmarket"]',
+                                'img[alt*="ürün"]',
+                                'img[alt*="product"]',
+                                'img[data-testid="product-image"]',
+                                'img[class*="product-detail-image"]'
+                            ]
+                            for selector in wwf_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "pullandbear.com" in url:
+                            # Pull&Bear için özel selector'lar
+                            pullandbear_selectors = [
+                                'img[data-testid="product-detail-image"]',
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="pullandbear"]',
+                                'img[alt*="product"]',
+                                'img[class*="product-detail-image"]',
+                                'img[data-testid="product-image"]'
+                            ]
+                            for selector in pullandbear_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "lesbenjamins.com" in url:
+                            # Les Benjamins için özel selector'lar
+                            lesbenjamins_selectors = [
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="lesbenjamins"]',
+                                'img[alt*="product"]',
+                                'img[class*="product-detail-image"]',
+                                'img[data-testid="product-image"]',
+                                'img[class*="product__image"]'
+                            ]
+                            for selector in lesbenjamins_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "superstep.com.tr" in url:
+                            # Superstep için özel selector'lar
+                            superstep_selectors = [
+                                'img[class*="product-image"]',
+                                'img[class*="main-image"]',
+                                'img[src*="superstep"]',
+                                'img[alt*="ürün"]',
+                                'img[alt*="product"]'
+                            ]
+                            for selector in superstep_selectors:
+                                try:
+                                    img = await page.query_selector(selector)
+                                    if img:
+                                        src = await img.get_attribute('src')
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            image = src
+                                            break
+                                except:
+                                    continue
+                        
+                        elif "sportime.com.tr" in url:
+                            # Sportime için özel selector'lar (Shopify tabanlı)
+                            sportime_image_selectors = [
+                                'img.product-single__photo',
+                                'img.product__photo',
+                                'img[data-product-image]',
+                                'img.product__image',
+                                '.product-single__photo img',
+                                '.product__photo img',
+                                'img[src*="sportime.com.tr/cdn"]',
+                                'img[src*="sportime.com.tr/files"]',
+                                'img[src*="cdn.shopify.com"]',
+                                'img[data-src*="sportime"]',
+                                'img[data-src*="cdn.shopify"]',
+                                'img[class*="product-image"]',
+                                'img[class*="product__image"]',
+                                'img[class*="product-single"]',
+                                'img[alt*="Champion"]',
+                                'img[alt*="champion"]'
+                            ]
+                            for selector in sportime_image_selectors:
+                                try:
+                                    # Önce data-src kontrolü (lazy loading)
+                                    img_elements = await page.query_selector_all(selector)
+                                    for img in img_elements:
+                                        # Önce data-src'yi kontrol et (lazy loading için)
+                                        data_src = await img.get_attribute('data-src')
+                                        src = await img.get_attribute('src')
+                                        
+                                        # data-src varsa onu kullan
+                                        if data_src and any(ext in data_src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            if not any(skip in data_src.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer', 'ad']):
+                                                # Boyut kontrolü
+                                                try:
+                                                    size = await img.bounding_box()
+                                                    if size and size['width'] > 100 and size['height'] > 100:
+                                                        image = data_src
+                                                        break
+                                                except:
+                                                    image = data_src
+                                                    break
+                                        
+                                        # src kontrolü
+                                        if src and any(ext in src.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                            if not any(skip in src.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer', 'ad']):
+                                                # Boyut kontrolü
+                                                try:
+                                                    size = await img.bounding_box()
+                                                    if size and size['width'] > 100 and size['height'] > 100:
+                                                        image = src
+                                                        break
+                                                except:
+                                                    image = src
+                                                    break
+                                        
+                                        # srcset kontrolü
+                                        srcset = await img.get_attribute('srcset')
+                                        if srcset and not image:
+                                            srcset_urls = srcset.split(',')
+                                            for srcset_url in srcset_urls:
+                                                url_part = srcset_url.strip().split(' ')[0]
+                                                if any(ext in url_part.lower() for ext in ['.jpg', '.jpeg', '.webp', '.png']):
+                                                    if not any(skip in url_part.lower() for skip in ['logo', 'icon', 'banner']):
+                                                        image = url_part
+                                                        break
+                                        
+                                        if image:
+                                            break
+                                    
+                                    if image:
+                                        break
+                                except Exception as e:
+                                    print(f"[DEBUG] Sportime image selector hatası {selector}: {e}")
+                                    continue
+                        
+
+                    
+                    # Son çare: Regex ile arama
+                    if not image:
+                        page_content = await page.content()
+                        img_pattern = re.compile(r'src=["\']([^"\']*\.(?:jpg|jpeg|webp|png)[^"\']*)["\']')
+                        matches = img_pattern.findall(page_content)
+                        
+                        for match in matches:
+                            if not any(skip in match.lower() for skip in ['logo', 'icon', 'banner', 'header', 'footer', 'ad', 'ads']):
+                                image = match
+                                break
+                    
+                    # Görsel URL'ini düzelt - Relative path'leri absolute URL'e çevir
+                    if image:
+                        if image.startswith('//'):
+                            # Protocol-relative URL
+                            image = 'https:' + image
+                        elif image.startswith('/'):
+                            # Root-relative URL
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(url)
+                            image = f"{parsed_url.scheme}://{parsed_url.netloc}{image}"
+                        elif not image.startswith('http'):
+                            # Relative URL
+                            from urllib.parse import urljoin
+                            image = urljoin(url, image)
+                        
+                        # Sportime/Shopify için width parametresini düzelt (küçük width'leri kaldır veya büyüt)
+                        if "sportime.com.tr" in url or "shopify" in image.lower():
+                            import re
+                            # width parametresini kontrol et
+                            width_match = re.search(r'[?&]width=(\d+)', image)
+                            if width_match:
+                                width_value = int(width_match.group(1))
+                                # Eğer width çok küçükse (100'den küçük), kaldır veya büyüt
+                                if width_value < 100:
+                                    # Küçük width'i kaldır
+                                    image = re.sub(r'[?&]width=\d+', '', image)
+                                    # Büyük bir width ekle (1000)
+                                    if '?' in image:
+                                        image += '&width=1000'
+                                    else:
+                                        image += '?width=1000'
+                                    print(f"[DEBUG] Sportime görsel width parametresi düzeltildi: {width_value} -> 1000")
+                            
+                except Exception as e:
+                    print(f"[HATA] Görsel çekilemedi: {e}")
+                    image = None
+
+                # Site-specific görsel varsa kullan
+                if site_image:
+                    image = site_image
+                    print(f"[DEBUG] Site-specific görsel kullanıldı: {image}")
+
+                # Site-specific fiyat varsa kullan
+                if site_price:
+                    price = str(site_price)
+                    print(f"[DEBUG] Site-specific fiyat kullanıldı: {price}")
+                
+                if not site_price:
+                    # Fiyat çek - İndirimli fiyat öncelikli
+                    price = None
+                    try:
+                        # İndirimli fiyat öncelikli selector'lar
+                        discount_price_selectors = [
+                            '.price-current',
+                            '.sale-price',
+                            '.discount-price',
+                            '.price-sale',
+                            '.product-sale',
+                            '.current-price',
+                            '.final-price',
+                            '.price-final',
+                            '[data-testid="current-price"]',
+                            '[data-testid="sale-price"]',
+                            '[class*="current"][class*="price"]',
+                            '[class*="sale"][class*="price"]',
+                            '[class*="discount"][class*="price"]'
+                        ]
+                        
+                        # Genel fiyat selector'ları
+                        general_price_selectors = [
+                            '.product-price',
+                            '.product__price',
+                            '.product-single__price',
+                            '.price',
+                            'span.price',
+                            '.money',
+                            'span.money',
+                            'div.price',
+                            'p.price',
+                            '[data-testid="product-price"]',
+                            '[class*="price"]',
+                            '[itemprop="price"]',
+                            'span',
+                            'div',
+                            'p'
+                        ]
+                        
+                        # Önce indirimli fiyat ara
+                        for selector in discount_price_selectors:
+                            try:
+                                price_elements = await page.query_selector_all(selector)
+                                for element in price_elements:
+                                    text = await element.text_content()
+                                    if text:
+                                        # Daha esnek fiyat regex'i - sadece ₺ veya TL olmadan da çalışır
+                                        # Önce ₺ veya TL içeren fiyatları tercih et
+                                        if '₺' in text or 'TL' in text or 'tl' in text.lower():
+                                            price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL|tl)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL|tl)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL|tl))')
+                                        match = price_pattern.search(text)
+                                        if match:
+                                            price = match.group(1)
+                                            print(f"[DEBUG] İndirimli fiyat bulundu: {price}")
+                                            break
+                                        # Eğer ₺/TL yoksa ama sayı formatı doğruysa (örn: 1.299,99)
+                                        elif re.search(r'[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}', text):
+                                            price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', text)
+                                            if price_match:
+                                                price = price_match.group(1) + " TL"
+                                                print(f"[DEBUG] İndirimli fiyat bulundu (format): {price}")
+                                                break
+                                if price:
+                                    break
+                            except:
+                                continue
+                        
+                        # İndirimli fiyat bulunamadıysa genel fiyat ara
+                        if not price:
+                            for selector in general_price_selectors:
+                                try:
+                                    price_elements = await page.query_selector_all(selector)
+                                    for element in price_elements:
+                                        text = await element.text_content()
+                                        if text:
+                                            # Daha esnek fiyat regex'i
+                                            if '₺' in text or 'TL' in text or 'tl' in text.lower():
+                                                price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL|tl)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL|tl)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL|tl))')
+                                            match = price_pattern.search(text)
+                                            if match:
+                                                price = match.group(1)
+                                                print(f"[DEBUG] Genel fiyat bulundu: {price}")
+                                                break
+                                            # Format kontrolü (1.299,99 gibi)
+                                            elif re.search(r'[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}', text):
+                                                price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', text)
+                                                if price_match:
+                                                    price = price_match.group(1) + " TL"
+                                                    print(f"[DEBUG] Genel fiyat bulundu (format): {price}")
+                                                    break
+                                        if price:
+                                                break
+                                    if price:
+                                        break
+                                except:
+                                    continue
+                        
+                        # Sportime.com.tr için özel fiyat çekme
+                        if ("sportime.com.tr" in url) and (not price or price == "Fiyat bulunamadı"):
+                            print(f"[DEBUG] Sportime.com.tr için özel fiyat çekme başlıyor")
+                            try:
+                                # Sportime için özel fiyat selector'ları (Shopify tabanlı)
+                                sportime_price_selectors = [
+                                    '.product-price',
+                                    '.product__price',
+                                    '.product-single__price',
+                                    'span.product-price',
+                                    'span.product__price',
+                                    'span.product-single__price',
+                                    '.price',
+                                    'span.price',
+                                    '.money',
+                                    'span.money',
+                                    '[class*="product"][class*="price"]',
+                                    '[class*="price"]',
+                                    '[class*="Price"]',
+                                    'span[class*="price"]',
+                                    'div[class*="price"]',
+                                    '[data-price]',
+                                    '.current-price',
+                                    '.sale-price',
+                                    'span.current-price',
+                                    'span.sale-price',
+                                    '[itemprop="price"]',
+                                    '[itemprop="priceCurrency"]',
+                                    '.price-wrapper .price',
+                                    '.product-info .price',
+                                    '.product-detail-price',
+                                    'span:has-text("₺")',
+                                    'div:has-text("₺")',
+                                    'p:has-text("₺")'
+                                ]
+                                
+                                for selector in sportime_price_selectors:
+                                    try:
+                                        price_elements = await page.query_selector_all(selector)
+                                        for element in price_elements:
+                                            text = await element.text_content()
+                                            if text:
+                                                # Fiyat regex'i - Sportime formatı için
+                                                if '₺' in text or 'TL' in text or 'tl' in text.lower():
+                                                    price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL|tl)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL|tl)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL|tl))')
+                                                    match = price_pattern.search(text)
+                                                    if match:
+                                                        price = match.group(1)
+                                                        print(f"[DEBUG] Sportime fiyat bulundu: {price}")
+                                                        break
+                                                # Format kontrolü (1.299,99 gibi)
+                                                elif re.search(r'[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}', text):
+                                                    price_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', text)
+                                                    if price_match:
+                                                        price = price_match.group(1) + " TL"
+                                                        print(f"[DEBUG] Sportime fiyat bulundu (format): {price}")
+                                                        break
+                                        if price and price != "Fiyat bulunamadı":
+                                            break
+                                    except Exception as e:
+                                        print(f"[DEBUG] Sportime price selector hatası {selector}: {e}")
+                                        continue
+                                
+                                # Sportime için JSON-LD structured data'dan fiyat çek
+                                if not price or price == "Fiyat bulunamadı":
+                                    try:
+                                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                                        for script in json_ld_scripts:
+                                            script_content = await script.text_content()
+                                            if script_content and 'offers' in script_content:
+                                                import json
+                                                try:
+                                                    data = json.loads(script_content)
+                                                    if isinstance(data, dict) and 'offers' in data:
+                                                        offers = data['offers']
+                                                        if isinstance(offers, dict) and 'price' in offers:
+                                                            price_value = offers['price']
+                                                            if isinstance(price_value, (int, float)):
+                                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                                print(f"[DEBUG] Sportime JSON-LD fiyat bulundu: {price}")
+                                                                break
+                                                        elif isinstance(offers, list) and len(offers) > 0:
+                                                            if 'price' in offers[0]:
+                                                                price_value = offers[0]['price']
+                                                                if isinstance(price_value, (int, float)):
+                                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                                    print(f"[DEBUG] Sportime JSON-LD fiyat bulundu: {price}")
+                                                                    break
+                                                except json.JSONDecodeError:
+                                                    continue
+                                    except Exception as e:
+                                        print(f"[DEBUG] Sportime JSON-LD fiyat çekme hatası: {e}")
+                                
+                                # Sportime için meta tag'lerden fiyat çek
+                                if not price or price == "Fiyat bulunamadı":
+                                    try:
+                                        meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                                        if meta_price:
+                                            price_value = await meta_price.get_attribute('content')
+                                            if price_value:
+                                                try:
+                                                    price_float = float(price_value)
+                                                    price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] Sportime meta fiyat bulundu: {price}")
+                                                except:
+                                                    pass
+                                    except Exception as e:
+                                        print(f"[DEBUG] Sportime meta fiyat çekme hatası: {e}")
+                                
+                            except Exception as e:
+                                print(f"[DEBUG] Sportime özel fiyat çekme hatası: {e}")
+                        
+                        # Regex fallback - Geliştirilmiş yaklaşım
+                        if not price:
+                            try:
+                                page_text = await page.text_content()
+                                # Önce ₺/TL içeren fiyatları ara
+                                price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL|tl)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL|tl)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL|tl))')
+                                match = price_pattern.search(page_text)
+                                if match:
+                                    price = match.group(1)
+                                else:
+                                    # Sadece format kontrolü (1.299,99 gibi)
+                                    format_match = re.search(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', page_text)
+                                    if format_match:
+                                        # Sayfa içinde en çok geçen fiyat formatını al (genelde ürün fiyatı)
+                                        all_prices = re.findall(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})', page_text)
+                                        if all_prices:
+                                            # En yüksek fiyatı al (genelde ürün fiyatı, küçük sayılar genelde boyut/numara olur)
+                                            try:
+                                                prices_numeric = []
+                                                for p in all_prices:
+                                                    p_clean = p.replace('.', '').replace(',', '.')
+                                                    try:
+                                                        prices_numeric.append((float(p_clean), p))
+                                                    except:
+                                                        continue
+                                                if prices_numeric:
+                                                    # 100 TL'den büyük fiyatları filtrele (ürün fiyatı olma ihtimali yüksek)
+                                                    valid_prices = [(val, p) for val, p in prices_numeric if val >= 100]
+                                                    if valid_prices:
+                                                        price = max(valid_prices, key=lambda x: x[0])[1] + " TL"
+                                                    else:
+                                                        price = max(prices_numeric, key=lambda x: x[0])[1] + " TL"
+                                            except:
+                                                price = all_prices[0] + " TL"
+                                            else:
+                                                price = "Fiyat bulunamadı"
+                            except Exception as e:
+                                print(f"[DEBUG] Page text content hatası: {e}")
+                                price = "Fiyat bulunamadı"
+                        
+                        # SPX.com.tr için özel fiyat çekme
+                        if ("spx.com.tr" in url) and (not price or price == "Fiyat bulunamadı"):
+                            print(f"[DEBUG] SPX.com.tr için özel fiyat çekme başlıyor")
+                            try:
+                                # SPX için özel fiyat selector'ları (sayfa yapısına göre)
+                                spx_price_selectors = [
+                                    '.product-price',
+                                    '.price',
+                                    '.current-price',
+                                    '.sale-price',
+                                    '.product-price-current',
+                                    '.price-current',
+                                    '.price-sale',
+                                    '.product-info-price',
+                                    '.product-detail-price',
+                                    '[class*="price"][class*="current"]',
+                                    '[class*="price"][class*="sale"]',
+                                    '[class*="product"][class*="price"]',
+                                    '[data-price]',
+                                    '[data-testid*="price"]',
+                                    '[data-product-price]',
+                                    'span[class*="price"]',
+                                    'div[class*="price"]',
+                                    'p[class*="price"]',
+                                    '.price-wrapper .price',
+                                    '.product-info .price',
+                                    '.product-detail .price',
+                                    'span:has-text("₺")',
+                                    'div:has-text("₺")',
+                                    'p:has-text("₺")',
+                                    # SPX özel selector'lar
+                                    '[itemprop="price"]',
+                                    '[itemprop="priceCurrency"]',
+                                    '.product-price-wrapper',
+                                    '.price-container',
+                                    '.product-price-container'
+                                ]
+                                
+                                for selector in spx_price_selectors:
+                                    try:
+                                        price_elements = await page.query_selector_all(selector)
+                                        for element in price_elements:
+                                            text = await element.text_content()
+                                            if text and ('₺' in text or 'TL' in text):
+                                                # Fiyat regex'i - SPX formatı için
+                                                price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL))')
+                                                match = price_pattern.search(text)
+                                                if match:
+                                                    price = match.group(1)
+                                                    print(f"[DEBUG] SPX fiyat bulundu: {price}")
+                                                    break
+                                        if price and price != "Fiyat bulunamadı":
+                                            break
+                                    except Exception as e:
+                                        print(f"[DEBUG] SPX price selector hatası {selector}: {e}")
+                                        continue
+                                
+                                # SPX için JSON-LD structured data'dan fiyat çek
+                                if not price or price == "Fiyat bulunamadı":
+                                    try:
+                                        json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                                        for script in json_ld_scripts:
+                                            script_content = await script.text_content()
+                                            if script_content and 'offers' in script_content:
+                                                import json
+                                                try:
+                                                    data = json.loads(script_content)
+                                                    if isinstance(data, dict) and 'offers' in data:
+                                                        offers = data['offers']
+                                                        if isinstance(offers, dict) and 'price' in offers:
+                                                            price_value = offers['price']
+                                                            if isinstance(price_value, (int, float)):
+                                                                price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                                print(f"[DEBUG] SPX JSON-LD fiyat bulundu: {price}")
+                                                                break
+                                                        elif isinstance(offers, list) and len(offers) > 0:
+                                                            if 'price' in offers[0]:
+                                                                price_value = offers[0]['price']
+                                                                if isinstance(price_value, (int, float)):
+                                                                    price = f"{price_value:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                                    print(f"[DEBUG] SPX JSON-LD fiyat bulundu: {price}")
+                                                                    break
+                                                except json.JSONDecodeError:
+                                                    continue
+                                    except Exception as e:
+                                        print(f"[DEBUG] SPX JSON-LD fiyat çekme hatası: {e}")
+                                
+                                # SPX için meta tag'lerden fiyat çek
+                                if not price or price == "Fiyat bulunamadı":
+                                    try:
+                                        meta_price = await page.query_selector('meta[property="product:price:amount"]')
+                                        if meta_price:
+                                            price_value = await meta_price.get_attribute('content')
+                                            if price_value:
+                                                try:
+                                                    price_float = float(price_value)
+                                                    price = f"{price_float:,.2f} TL".replace(',', 'X').replace('.', ',').replace('X', '.')
+                                                    print(f"[DEBUG] SPX meta fiyat bulundu: {price}")
+                                                except:
+                                                    pass
+                                    except Exception as e:
+                                        print(f"[DEBUG] SPX meta fiyat çekme hatası: {e}")
+                                
+                            except Exception as e:
+                                print(f"[DEBUG] SPX özel fiyat çekme hatası: {e}")
+                        
+                        # Site-specific fiyat çekme (basitleştirilmiş)
+                        if not price or price == "Fiyat bulunamadı":
+                            print(f"[DEBUG] Site-specific fiyat çekme deneniyor...")
+                            # Site-specific configuration zaten yukarıda çalışıyor, burada ekstra bir şey yapmaya gerek yok
+                    except Exception as e:
+                        print(f"[HATA] Fiyat çekilemedi: {e}")
+                        price = "Fiyat bulunamadı"
+
+                # Eski fiyat çekme
+                old_price = None
+                if site_old_price:
+                    old_price = str(site_old_price)
+                    print(f"[DEBUG] Site-specific eski fiyat kullanıldı: {old_price}")
+                else:
+                    try:
+                        # Eski fiyat selector'ları
+                        old_price_selectors = [
+                            '.old-price',
+                            '.price-old',
+                            '.original-price',
+                            '.price-original',
+                            '.price-before',
+                            '.price-previous',
+                            's.price',
+                            'del.price',
+                            '[class*="old"][class*="price"]',
+                            '[class*="original"][class*="price"]'
+                        ]
+                        
+                        for selector in old_price_selectors:
+                            try:
+                                old_price_elements = await page.query_selector_all(selector)
+                                for element in old_price_elements:
+                                    text = await element.text_content()
+                                    if text and ('₺' in text or 'TL' in text):
+                                        price_pattern = re.compile(r'([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}\s*(?:₺|TL)|[0-9]{1,3}(?:\.[0-9]{3})*\s*(?:₺|TL)|[0-9]+(?:\.[0-9]{2})?\s*(?:₺|TL))')
+                                        match = price_pattern.search(text)
+                                        if match:
+                                            old_price = match.group(1)
+                                            print(f"[DEBUG] Eski fiyat bulundu: {old_price}")
+                                            break
+                                if old_price:
+                                    break
+                            except:
+                                continue
+                    except Exception as e:
+                        print(f"[HATA] Eski fiyat çekilemedi: {e}")
+
+                # İndirim bilgilerini çek
+                discount_info = None
+                try:
+                    # İndirim selector'ları
+                    discount_selectors = [
+                        '[class*="discount"]',
+                        '[class*="indirim"]',
+                        '[class*="sepet"]',
+                        '[class*="basket"]',
+                        '[class*="cart"]',
+                        '[class*="promo"]',
+                        '[class*="badge"]',
+                        '[class*="offer"]',
+                        '[class*="sale"]',
+                        '[class*="deal"]',
+                        '[class*="savings"]',
+                        '[class*="save"]',
+                        '[data-discount]',
+                        '[data-indirim]',
+                        '.discount-badge',
+                        '.indirim-badge',
+                        '.promo-badge',
+                        '.sale-badge'
+                    ]
+                    
+                    for selector in discount_selectors:
+                        try:
+                            discount_elements = await page.query_selector_all(selector)
+                            for element in discount_elements:
+                                text = await element.text_content()
+                                if text and text.strip():
+                                    text = text.strip()
+                                    # İndirim içeren metinleri kontrol et
+                                    discount_keywords = ['sepette', 'indirim', '%', 'ek', 'basket', 'cart', 'save', 'off', 'discount', 'promo', 'deal']
+                                    if any(keyword.lower() in text.lower() for keyword in discount_keywords):
+                                        # Metni temizle ve kısalt
+                                        discount_info = text[:100]  # Maksimum 100 karakter
+                                        print(f"[DEBUG] İndirim bilgisi bulundu: {discount_info}")
+                                        break
+                            if discount_info:
+                                break
+                        except:
+                            continue
+                    
+                    # Eğer selector'lardan bulunamadıysa, sayfa metninde ara
+                    if not discount_info:
+                        try:
+                            page_text = await page.text_content()
+                            # İndirim pattern'leri
+                            discount_patterns = [
+                                r'sepette\s+([0-9.,]+\s*(?:TL|₺))',
+                                r'sepette\s+(%?\s*[0-9]+\s*%?\s*indirim)',
+                                r'sepete\s+ekle[,\s]+(%?\s*[0-9]+\s*%?\s*indirim)',
+                                r'(%?\s*[0-9]+\s*%?\s*indirim)',
+                                r'sepette\s+ek\s+(%?\s*[0-9]+\s*%?\s*indirim)',
+                                r'(sepette\s+[0-9.,]+\s*TL)',
+                                r'(basket\s+[0-9.,]+\s*TL)',
+                                r'(cart\s+[0-9.,]+\s*TL)',
+                                r'(save\s+%?\s*[0-9]+)',
+                                r'(%?\s*[0-9]+\s*%?\s*off)'
+                            ]
+                            
+                            for pattern in discount_patterns:
+                                match = re.search(pattern, page_text, re.IGNORECASE)
+                                if match:
+                                    discount_info = match.group(1) if match.groups() else match.group(0)
+                                    discount_info = discount_info.strip()[:100]
+                                    print(f"[DEBUG] İndirim bilgisi regex ile bulundu: {discount_info}")
+                                    break
+                        except Exception as e:
+                            print(f"[DEBUG] İndirim bilgisi arama hatası: {e}")
+                except Exception as e:
+                    print(f"[DEBUG] İndirim bilgisi çekme hatası: {e}")
+                
+                print(f"[DEBUG] Çekilen başlık: {title}")
+                print(f"[DEBUG] Çekilen fiyat: {price}")
+                print(f"[DEBUG] Çekilen eski fiyat: {old_price}")
+                print(f"[DEBUG] Çekilen marka: {brand}")
+                print(f"[DEBUG] Çekilen görsel: {image}")
+                print(f"[DEBUG] Çekilen indirim bilgisi: {discount_info}")
+                
+                # Eğer images listesi boşsa ama image varsa, image'i ekle
+                if not images and image:
+                    images = [image]
+                # Eğer image yoksa ama images varsa, ilk görseli image olarak ayarla
+                elif not image and images:
+                    image = images[0]
+                
+                result = {
+                    "id": str(uuid.uuid4()),
+                    "url": url,
+                    "name": title.strip() if title else "İsim bulunamadı",
+                    "price": price,
+                    "old_price": old_price,
+                    "image": image,
+                    "images": images if images else ([image] if image else []),  # Tüm görseller
+                    "brand": brand,
+                    "discount_info": discount_info,
+                    "sizes": []
+                }
+                set_cached_result(url, result)
+                return result
+                
+            finally:
+                await browser.close()
+
+    except Exception as e:
+        print(f"[HATA] Scraping başarısız: {e}")
+        traceback.print_exc()
+        result = {
+            "id": str(uuid.uuid4()),
+            "url": url,
+            "name": "Scraping hatası - Lütfen URL'yi kontrol edin",
+            "price": "Fiyat bulunamadı",
+            "old_price": None,
+            "image": None,
+            "brand": brand,
+            "discount_info": None,
+            "sizes": []
+        }
+        set_cached_result(url, result)
+        return result
+
+@app.route("/")
+def index():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+    return render_template("index.html")
+
+@app.route("/admin/brands")
+@login_required
+def manage_brands():
+    """Dinamik markaları yönet"""
+    dynamic_brands = load_dynamic_brands()
+    all_brands = BRANDS + dynamic_brands
+    return render_template("manage_brands.html", brands=all_brands, dynamic_brands=dynamic_brands)
+
+@app.route("/admin/brands/add", methods=["POST"])
+@login_required
+def add_brand_manual():
+    """Manuel olarak marka ekle"""
+    domain = request.form.get("domain")
+    brand_name = request.form.get("brand_name")
+    
+    if domain and brand_name:
+        dynamic_brands = load_dynamic_brands()
+        
+        # Zaten var mı kontrol et
+        for existing_domain, existing_name in dynamic_brands:
+            if existing_domain == domain:
+                flash("Bu domain zaten mevcut", "error")
+                return redirect(url_for("manage_brands"))
+        
+        # Yeni markayı ekle
+        new_brand = (domain, brand_name)
+        dynamic_brands.append(new_brand)
+        save_dynamic_brands(dynamic_brands)
+        
+        flash(f"Marka başarıyla eklendi: {domain} -> {brand_name}", "success")
+    else:
+        flash("Domain ve marka adı gerekli", "error")
+    
+    return redirect(url_for("manage_brands"))
+
+@app.route("/admin/brands/delete/<domain>", methods=["POST"])
+@login_required
+def delete_brand(domain):
+    """Dinamik markayı sil"""
+    dynamic_brands = load_dynamic_brands()
+    
+    # Markayı bul ve sil
+    for i, (brand_domain, brand_name) in enumerate(dynamic_brands):
+        if brand_domain == domain:
+            deleted_brand = dynamic_brands.pop(i)
+            save_dynamic_brands(dynamic_brands)
+            flash(f"Marka silindi: {deleted_brand[0]} -> {deleted_brand[1]}", "success")
+            break
+    else:
+        flash("Marka bulunamadı", "error")
+    
+    return redirect(url_for("manage_brands"))
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    products = current_user.get_products()
+    return render_template("dashboard.html", products=products)
+
+@app.route("/profile")
+@login_required
+def profile():
+    """Kullanıcının profil sayfası"""
+    return render_template("profile.html", user=current_user)
+
+@app.route("/profile/settings", methods=["GET", "POST"])
+@login_required
+def profile_settings():
+    """Hesap ayarları sayfası"""
+    if request.method == "POST":
+        username = request.form.get("username")
+        email = request.form.get("email")
+        current_password = request.form.get("current_password")
+        new_password = request.form.get("new_password")
+        
+        if username and username != current_user.username:
+            if User.get_by_username(username):
+                flash("Bu kullanıcı adı zaten kullanılıyor", "error")
+            else:
+                current_user.username = username
+                current_user.save()
+                flash("Kullanıcı adı güncellendi", "success")
+        
+        if email and email != current_user.email:
+            if User.get_by_email(email):
+                flash("Bu e-posta adresi zaten kullanılıyor", "error")
+            else:
+                current_user.email = email
+                current_user.save()
+                flash("E-posta adresi güncellendi", "success")
+        
+        if current_password and new_password:
+            if current_user.check_password(current_password):
+                current_user.set_password(new_password)
+                current_user.save()
+                flash("Şifre güncellendi", "success")
+            else:
+                flash("Mevcut şifre yanlış", "error")
+    
+    return render_template("profile_settings.html", user=current_user)
+
+@app.route("/profile/preferences", methods=["GET", "POST"])
+@login_required
+def profile_preferences():
+    """Kullanıcı tercihleri sayfası"""
+    if request.method == "POST":
+        theme = request.form.get("theme", "light")
+        language = request.form.get("language", "tr")
+        notifications = request.form.get("notifications", "off") == "on"
+        
+        # Tercihleri kaydet (şimdilik session'da)
+        session['user_theme'] = theme
+        session['user_language'] = language
+        session['user_notifications'] = notifications
+        
+        flash("Tercihleriniz güncellendi", "success")
+    
+    return render_template("profile_preferences.html", user=current_user)
+
+@app.route("/profile/collections")
+@login_required
+def profile_collections():
+    """Kullanıcının koleksiyonları sayfası"""
+    collections = Collection.get_user_collections(current_user.id)
+    return render_template("profile_collections.html", collections=collections)
+
+@app.route("/profile/favorites")
+@login_required
+def profile_favorites():
+    """Kullanıcının favorileri sayfası"""
+    products = Product.get_user_products(current_user.id)
+    return render_template("profile_favorites.html", products=products)
+
+@app.route("/profile/<profile_url>")
+def public_profile(profile_url):
+    """Kullanıcının public profilini göster"""
+    user = User.get_by_profile_url(profile_url)
+    if not user:
+        flash("Kullanıcı bulunamadı", "error")
+        return redirect(url_for("index"))
+    
+    products = user.get_products()
+    return render_template("public_profile.html", user=user, products=products)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+    
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        remember = request.form.get("remember") == "1"
+        
+        user = User.get_by_username(username)
+        if user and user.check_password(password):
+            login_user(user, remember=remember)
+            flash("Başarıyla giriş yaptınız!", "success")
+            return redirect(url_for("dashboard"))
+        else:
+            flash("Kullanıcı adı veya şifre hatalı", "error")
+    
+    return render_template("login.html")
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard"))
+    
+    if request.method == "POST":
+        username = request.form.get("username")
+        email = request.form.get("email")
+        password = request.form.get("password")
+        confirm_password = request.form.get("confirm_password")
+        
+        # Form validasyonu
+        if not username or not email or not password or not confirm_password:
+            flash("Tüm alanları doldurun", "error")
+            return render_template("register.html")
+        
+        if len(username) < 3:
+            flash("Kullanıcı adı en az 3 karakter olmalıdır", "error")
+            return render_template("register.html")
+        
+        if len(password) < 6:
+            flash("Şifre en az 6 karakter olmalıdır", "error")
+            return render_template("register.html")
+        
+        if password != confirm_password:
+            flash("Şifreler eşleşmiyor", "error")
+            return render_template("register.html")
+        
+        try:
+            # Kullanıcı adı kontrolü
+            if User.get_by_username(username):
+                flash("Bu kullanıcı adı zaten kullanılıyor", "error")
+                return render_template("register.html")
+            
+            # Email kontrolü
+            if User.get_by_email(email):
+                flash("Bu email adresi zaten kullanılıyor", "error")
+                return render_template("register.html")
+            
+            # Veritabanını başlat (eğer yoksa)
+            from models import init_db
+            init_db()
+            
+            user = User.create(username, email, password)
+            if user:
+                login_user(user)
+                flash("Hesabınız başarıyla oluşturuldu!", "success")
+                return redirect(url_for("dashboard"))
+            else:
+                flash("Kayıt sırasında bir hata oluştu", "error")
+        except Exception as e:
+            print(f"[HATA] Kayıt hatası: {e}")
+            flash(f"Kayıt sırasında bir hata oluştu: {str(e)}", "error")
+    
+    return render_template("register.html")
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    flash("Başarıyla çıkış yaptınız", "success")
+    return redirect(url_for("index"))
+
+def normalize_price(price_str):
+    """Fiyat string'ini normalize et - karşılaştırma için"""
+    if not price_str:
+        return None
+    # Sadece sayıları ve nokta/virgül al
+    import re
+    price_clean = re.sub(r'[^\d.,]', '', str(price_str))
+    # Virgülü noktaya çevir
+    price_clean = price_clean.replace(',', '.')
+    try:
+        return float(price_clean)
+    except:
+        return None
+
+def compare_and_fix_product(product, scraped_data):
+    """Ürün verilerini karşılaştır ve hatalıysa düzelt"""
+    updates = {}
+    fixed_fields = []
+    
+    # Fiyat karşılaştırması
+    db_price = normalize_price(product.price)
+    scraped_price = normalize_price(scraped_data.get('price') or scraped_data.get('current_price'))
+    
+    if scraped_price and db_price:
+        # %10'dan fazla fark varsa güncelle
+        price_diff = abs(scraped_price - db_price) / max(db_price, scraped_price) * 100
+        if price_diff > 10:
+            updates['price'] = scraped_data.get('price') or scraped_data.get('current_price')
+            fixed_fields.append('fiyat')
+            print(f"[OTOMATIK DÜZELTME] Fiyat güncellendi: {product.price} -> {updates['price']} (Fark: %{price_diff:.2f})")
+    elif scraped_price and not db_price:
+        # Veritabanında fiyat yoksa ekle
+        updates['price'] = scraped_data.get('price') or scraped_data.get('current_price')
+        fixed_fields.append('fiyat')
+        print(f"[OTOMATIK DÜZELTME] Eksik fiyat eklendi: {updates['price']}")
+    
+    # Görsel karşılaştırması
+    db_image = product.image or ''
+    scraped_image = scraped_data.get('image') or ''
+    
+    if scraped_image and db_image:
+        # Görsel URL'leri normalize et
+        db_image_clean = db_image.split('?')[0].split('#')[0]  # Query string ve fragment kaldır
+        scraped_image_clean = scraped_image.split('?')[0].split('#')[0]
+        
+        # Farklı görseller varsa ve scraped görsel daha iyi görünüyorsa güncelle
+        if db_image_clean != scraped_image_clean:
+            # Görsel kalitesi kontrolü (daha yüksek çözünürlük veya daha iyi format)
+            if 'width=' in scraped_image or 'w=' in scraped_image:
+                # Boyut parametresi varsa, daha yüksek çözünürlüklü olanı tercih et
+                db_width = 0
+                scraped_width = 0
+                import re
+                db_match = re.search(r'[wW]idth[=:](\d+)|w[=:](\d+)', db_image)
+                scraped_match = re.search(r'[wW]idth[=:](\d+)|w[=:](\d+)', scraped_image)
+                if db_match:
+                    db_width = int(db_match.group(1) or db_match.group(2) or 0)
+                if scraped_match:
+                    scraped_width = int(scraped_match.group(1) or scraped_match.group(2) or 0)
+                
+                if scraped_width > db_width:
+                    updates['image'] = scraped_image
+                    fixed_fields.append('görsel')
+                    print(f"[OTOMATIK DÜZELTME] Görsel güncellendi (daha yüksek çözünürlük)")
+            elif not db_image or len(scraped_image) > len(db_image):
+                # Görsel yoksa veya yeni görsel daha uzun URL'ye sahipse (genelde daha iyi)
+                updates['image'] = scraped_image
+                fixed_fields.append('görsel')
+                print(f"[OTOMATIK DÜZELTME] Görsel güncellendi")
+    elif scraped_image and not db_image:
+        # Görsel yoksa ekle
+        updates['image'] = scraped_image
+        fixed_fields.append('görsel')
+        print(f"[OTOMATIK DÜZELTME] Eksik görsel eklendi")
+    
+    # Eski fiyat kontrolü
+    scraped_old_price = scraped_data.get('old_price')
+    if scraped_old_price:
+        # Eğer veritabanında eski fiyat yoksa veya farklıysa güncelle
+        if not product.old_price or product.old_price != scraped_old_price:
+            updates['old_price'] = scraped_old_price
+            if not product.old_price:
+                fixed_fields.append('eski fiyat (eklendi)')
+            else:
+                fixed_fields.append('eski fiyat (güncellendi)')
+            print(f"[OTOMATIK DÜZELTME] Eski fiyat güncellendi: {product.old_price} -> {scraped_old_price}")
+    
+    # İndirim bilgisi kontrolü
+    scraped_discount_info = scraped_data.get('discount_info')
+    if scraped_discount_info:
+        # Eğer veritabanında indirim bilgisi yoksa veya farklıysa güncelle
+        if not product.discount_info or product.discount_info != scraped_discount_info:
+            updates['discount_info'] = scraped_discount_info
+            if not product.discount_info:
+                fixed_fields.append('indirim bilgisi (eklendi)')
+            else:
+                fixed_fields.append('indirim bilgisi (güncellendi)')
+            print(f"[OTOMATIK DÜZELTME] İndirim bilgisi güncellendi: {product.discount_info} -> {scraped_discount_info}")
+    
+    # Güncellemeleri uygula
+    if updates:
+        Product.update(product.id, product.user_id, **updates)
+        return fixed_fields
+    
+    return []
+
+def validate_url(url):
+    """URL'yi validate et ve normalize et"""
+    if not url:
+        return None
+    
+    url = url.strip()
+    
+    # URL formatını kontrol et
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            url = 'https://' + url
+            parsed = urlparse(url)
+        
+        if not parsed.netloc:
+            return None
+        
+        # Güvenlik: Sadece http ve https protokollerine izin ver
+        if parsed.scheme not in ['http', 'https']:
+            return None
+        
+        return url
+    except:
+        return None
+
+@app.route("/add_product", methods=["POST"])
+@login_required
+def add_product():
+    product_url = request.form.get("product_url")
+    bulk_urls = request.form.get("bulk_urls")
+    
+    if product_url:
+        # URL validation
+        validated_url = validate_url(product_url)
+        if not validated_url:
+            flash("Geçersiz URL formatı. Lütfen geçerli bir ürün linki girin.", "error")
+            return redirect(url_for("dashboard"))
+        
+        try:
+            product_data = asyncio.run(scrape_product(validated_url))
+            if not product_data:
+                flash("Ürün bilgileri çekilemedi. Lütfen geçerli bir ürün linki olduğundan emin olun.", "error")
+                return redirect(url_for("dashboard"))
+            
+            # Ürün adı kontrolü
+            product_name = product_data.get('name') or product_data.get('title', '')
+            if not product_name or len(product_name.strip()) == 0:
+                flash("Ürün adı alınamadı. Lütfen farklı bir link deneyin.", "error")
+                return redirect(url_for("dashboard"))
+            
+            # Ürünü oluştur
+            product_images = product_data.get('images', [])
+            if not product_images and product_data.get('image'):
+                product_images = [product_data.get('image')]
+            
+            product = Product.create(
+                    current_user.id,
+                product_name,
+                product_data.get('price') or product_data.get('current_price', ''),
+                product_data.get('image', ''),
+                product_data.get('brand', ''),
+                product_data.get('url', validated_url),
+                old_price=product_data.get('old_price'),
+                current_price=product_data.get('current_price'),
+                discount_percentage=product_data.get('discount_percentage'),
+                images=product_images,
+                discount_info=product_data.get('discount_info')
+            )
+            
+            # Ürün eklendikten sonra tekrar kontrol et ve düzelt
+            if product:
+                try:
+                    # Tekrar scraping yap (cache'den gelecek, hızlı olacak)
+                    verification_data = asyncio.run(scrape_product(validated_url))
+                    if verification_data:
+                        fixed = compare_and_fix_product(product, verification_data)
+                        if fixed:
+                            flash(f"Ürün eklendi ve {', '.join(fixed)} düzeltildi: {product.name}", "success")
+                        else:
+                            flash(f"Ürün başarıyla eklendi: {product.name}", "success")
+                    else:
+                        flash(f"Ürün başarıyla eklendi: {product.name}", "success")
+                except Exception as verify_error:
+                    # Doğrulama hatası kritik değil, ürün zaten eklendi
+                    print(f"[UYARI] Doğrulama hatası (kritik değil): {verify_error}")
+                    flash(f"Ürün başarıyla eklendi: {product.name}", "success")
+            else:
+                flash("Ürün oluşturulamadı. Lütfen tekrar deneyin.", "error")
+                return redirect(url_for("dashboard"))
+                
+        except asyncio.TimeoutError:
+            flash("Ürün sayfası yüklenirken zaman aşımı oluştu. Lütfen tekrar deneyin.", "error")
+            return redirect(url_for("dashboard"))
+        except Exception as e:
+            flash(f"Ürün eklenirken hata oluştu: {str(e)[:100]}", "error")
+            print(f"[HATA] Ürün eklenirken hata: {e}")
+            import traceback
+            traceback.print_exc()
+            return redirect(url_for("dashboard"))
+    
+    elif bulk_urls:
+        urls = [url.strip() for url in bulk_urls.split('\n') if url.strip()]
+        if not urls:
+            flash("Lütfen en az bir geçerli URL girin.", "error")
+            return redirect(url_for("dashboard"))
+        
+        added_count = 0
+        fixed_count = 0
+        failed_count = 0
+        max_urls = 50  # Güvenlik: Maksimum URL sayısı
+        
+        if len(urls) > max_urls:
+            flash(f"Çok fazla URL. Maksimum {max_urls} URL ekleyebilirsiniz. İlk {max_urls} URL işlenecek.", "warning")
+            urls = urls[:max_urls]
+        
+        for url in urls:
+            validated_url = validate_url(url)
+            if not validated_url:
+                failed_count += 1
+                print(f"[UYARI] Geçersiz URL atlandı: {url}")
+                continue
+            
+            try:
+                product_data = asyncio.run(scrape_product(validated_url))
+                if not product_data:
+                    failed_count += 1
+                    continue
+                
+                product_name = product_data.get('name') or product_data.get('title', '')
+                if not product_name or len(product_name.strip()) == 0:
+                    failed_count += 1
+                    continue
+                
+                product_images = product_data.get('images', [])
+                if not product_images and product_data.get('image'):
+                    product_images = [product_data.get('image')]
+                
+                product = Product.create(
+                        current_user.id,
+                    product_name,
+                    product_data.get('price') or product_data.get('current_price', ''),
+                    product_data.get('image', ''),
+                    product_data.get('brand', ''),
+                    product_data.get('url', validated_url),
+                    old_price=product_data.get('old_price'),
+                    current_price=product_data.get('current_price'),
+                    discount_percentage=product_data.get('discount_percentage'),
+                    images=product_images,
+                    discount_info=product_data.get('discount_info')
+                )
+                
+                if product:
+                    try:
+                        # Kontrol ve düzeltme
+                        verification_data = asyncio.run(scrape_product(validated_url))
+                        if verification_data:
+                            fixed = compare_and_fix_product(product, verification_data)
+                            if fixed:
+                                fixed_count += 1
+                        added_count += 1
+                    except Exception as verify_error:
+                        # Doğrulama hatası kritik değil
+                        print(f"[UYARI] Doğrulama hatası (kritik değil) ({validated_url}): {verify_error}")
+                        added_count += 1
+                else:
+                    failed_count += 1
+            except asyncio.TimeoutError:
+                failed_count += 1
+                print(f"[HATA] Zaman aşımı ({validated_url})")
+            except Exception as e:
+                failed_count += 1
+                print(f"[HATA] Toplu ekleme hatası ({validated_url}): {e}")
+        
+        # Sonuç mesajı
+        if added_count > 0:
+            message_parts = [f"{added_count} ürün eklendi"]
+            if fixed_count > 0:
+                message_parts.append(f"{fixed_count} ürün düzeltildi")
+            if failed_count > 0:
+                message_parts.append(f"{failed_count} ürün eklenemedi")
+            flash(", ".join(message_parts), "success" if failed_count == 0 else "warning")
+        else:
+            flash("Hiçbir ürün eklenemedi. Lütfen geçerli URL'ler girdiğinizden emin olun.", "error")
+    
+    return redirect(url_for("dashboard"))
+
+@app.route("/delete_product/<product_id>", methods=["POST"])
+@login_required
+def delete_product(product_id):
+    """Ürün sil - Error handling ile"""
+    try:
+        # UUID format kontrolü
+        if not product_id or len(product_id) != 36:
+            flash("Geçersiz ürün ID", "error")
+            return redirect(url_for("dashboard"))
+        
+        success = Product.delete(product_id, current_user.id)
+        if success:
+            flash("Ürün başarıyla silindi", "success")
+        else:
+            flash("Ürün bulunamadı veya silinemedi", "error")
+    except Exception as e:
+        print(f"[HATA] Ürün silme hatası: {e}")
+        flash("Ürün silinirken bir hata oluştu", "error")
+    
+    return redirect(url_for("dashboard"))
+
+# Koleksiyon route'ları
+@app.route("/collections")
+@login_required
+def collections():
+    """Kullanıcının koleksiyonlarını göster"""
+    user_collections = Collection.get_user_collections(current_user.id)
+    return render_template("collections.html", collections=user_collections)
+
+@app.route("/collections/create", methods=["GET", "POST"])
+@login_required
+def create_collection():
+    """Yeni koleksiyon oluştur - Input validation ile"""
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        collection_type = request.form.get("type", "").strip()
+        privacy = request.form.get("privacy", "public")
+        
+        # Input validation
+        if not name:
+            flash("Koleksiyon adı gereklidir", "error")
+            return render_template("create_collection.html")
+        
+        if len(name) > 100:
+            flash("Koleksiyon adı çok uzun (maksimum 100 karakter)", "error")
+            return render_template("create_collection.html")
+        
+        if description and len(description) > 500:
+            flash("Açıklama çok uzun (maksimum 500 karakter)", "error")
+            return render_template("create_collection.html")
+        
+        if not collection_type:
+            flash("Koleksiyon tipi gereklidir", "error")
+            return render_template("create_collection.html")
+        
+        # Geçerli tip kontrolü
+        valid_types = ["custom", "favorites", "wishlist"]
+        if collection_type not in valid_types:
+            flash("Geçersiz koleksiyon tipi", "error")
+            return render_template("create_collection.html")
+        
+        try:
+            # Gizlilik ayarını boolean'a çevir
+            is_public = privacy == "public"
+            collection = Collection.create(current_user.id, name, description, collection_type, is_public)
+            if collection:
+                flash("Koleksiyon başarıyla oluşturuldu", "success")
+                return redirect(url_for("collections"))
+            else:
+                flash("Koleksiyon oluşturulamadı", "error")
+        except Exception as e:
+            print(f"[HATA] Koleksiyon oluşturma hatası: {e}")
+            flash("Koleksiyon oluşturulurken bir hata oluştu", "error")
+    
+    return render_template("create_collection.html")
+
+@app.route("/collections/<collection_id>")
+@login_required
+def view_collection(collection_id):
+    """Koleksiyon detayını göster"""
+    collection = Collection.get_by_id(collection_id)
+    if not collection or collection.user_id != current_user.id:
+        flash("Koleksiyon bulunamadı", "error")
+        return redirect(url_for("collections"))
+    
+    products = collection.get_products()
+    return render_template("view_collection.html", collection=collection, products=products)
+
+@app.route("/collections/<collection_id>/add_product/<product_id>", methods=["POST"])
+@login_required
+def add_to_collection(collection_id, product_id):
+    """Koleksiyona ürün ekle"""
+    collection = Collection.get_by_id(collection_id)
+    if not collection or collection.user_id != current_user.id:
+        # Check if AJAX request
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'success': False,
+                'error': 'Koleksiyon bulunamadı'
+            }), 404
+        
+        flash("Koleksiyon bulunamadı", "error")
+        return redirect(url_for("collections"))
+    
+    if collection.add_product(product_id):
+        # Check if AJAX request
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'success': True,
+                'message': 'Ürün koleksiyona eklendi'
+            }), 200
+        
+        flash("Ürün koleksiyona eklendi", "success")
+    else:
+        # Check if AJAX request
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'success': False,
+                'error': 'Ürün zaten koleksiyonda'
+            }), 400
+        
+        flash("Ürün zaten koleksiyonda", "error")
+    
+    return redirect(request.referrer or url_for("dashboard"))
+
+@app.route("/collections/<collection_id>/remove_product/<product_id>", methods=["POST"])
+@login_required
+def remove_from_collection(collection_id, product_id):
+    """Koleksiyondan ürün çıkar - Error handling ile"""
+    try:
+        # UUID format kontrolü
+        if not collection_id or len(collection_id) != 36:
+            flash("Geçersiz koleksiyon ID", "error")
+            return redirect(url_for("collections"))
+        
+        if not product_id or len(product_id) != 36:
+            flash("Geçersiz ürün ID", "error")
+            return redirect(url_for("collections"))
+        
+        collection = Collection.get_by_id(collection_id)
+        if not collection or collection.user_id != current_user.id:
+            flash("Koleksiyon bulunamadı veya yetkiniz yok", "error")
+            return redirect(url_for("collections"))
+        
+        collection.remove_product(product_id)
+        flash("Ürün koleksiyondan çıkarıldı", "success")
+    except Exception as e:
+        print(f"[HATA] Koleksiyondan ürün çıkarma hatası: {e}")
+        flash("Ürün çıkarılırken bir hata oluştu", "error")
+    
+    return redirect(request.referrer or url_for("collections"))
+
+@app.route("/collections/<collection_id>/delete", methods=["POST"])
+@login_required
+def delete_collection(collection_id):
+    """Koleksiyonu sil - Error handling ile"""
+    try:
+        # UUID format kontrolü
+        if not collection_id or len(collection_id) != 36:
+            flash("Geçersiz koleksiyon ID", "error")
+            return redirect(url_for("collections"))
+        
+        collection = Collection.get_by_id(collection_id)
+        if not collection or collection.user_id != current_user.id:
+            flash("Koleksiyon bulunamadı veya yetkiniz yok", "error")
+            return redirect(url_for("collections"))
+        
+        collection.delete()
+        flash("Koleksiyon başarıyla silindi", "success")
+    except Exception as e:
+        print(f"[HATA] Koleksiyon silme hatası: {e}")
+        flash("Koleksiyon silinirken bir hata oluştu", "error")
+    
+    return redirect(url_for("collections"))
+
+@app.route("/collection/<share_url>")
+def public_collection(share_url):
+    """Paylaşılan koleksiyonu göster"""
+    collection = Collection.get_by_share_url(share_url)
+    if not collection:
+        flash("Koleksiyon bulunamadı", "error")
+        return redirect(url_for("index"))
+    
+    user = User.get_by_id(collection.user_id)
+    products = collection.get_products()
+    return render_template("public_collection.html", collection=collection, user=user, products=products)
+
+@app.route("/price-tracking")
+@login_required
+def price_tracking():
+    """Fiyat takip ana sayfası"""
+    from models import PriceTracking
+    
+    # Kullanıcının fiyat takiplerini getir
+    tracking_items = PriceTracking.get_user_tracking(current_user.id)
+    
+    # İstatistikleri hesapla
+    tracking_stats = {
+        'total_products': len(tracking_items),
+        'active_alerts': sum(1 for item in tracking_items if item[7]),  # alert_price
+        'price_drops': sum(1 for item in tracking_items if float(item[4] or 0) < 0),  # price_change
+        'total_savings': abs(sum(float(item[4] or 0) for item in tracking_items if float(item[4] or 0) < 0))
+    }
+    
+    return render_template("price_tracking.html", 
+                         tracking_items=tracking_items, 
+                         tracking_stats=tracking_stats)
+
+@app.route("/price-tracking/add", methods=["POST"])
+@login_required
+def add_price_tracking():
+    """Yeni fiyat takibi ekle"""
+    from models import PriceTracking, Product
+    
+    product_name = request.form.get("product_name")
+    current_price = request.form.get("current_price")
+    alert_price = request.form.get("alert_price")
+    
+    if not product_name or not current_price:
+        flash("Ürün adı ve fiyat gereklidir", "error")
+        return redirect(url_for("price_tracking"))
+    
+    try:
+        # Önce ürünü oluştur
+        product = Product.create(
+            user_id=current_user.id,
+            name=product_name,
+            price=current_price,
+            image=None,
+            brand="Bilinmeyen",
+            url="#"
+        )
+        
+        # Fiyat takibini oluştur
+        PriceTracking.create(
+            user_id=current_user.id,
+            product_id=product.id,
+            current_price=current_price,
+            alert_price=alert_price if alert_price else None
+        )
+        
+        flash("Fiyat takibi başarıyla eklendi", "success")
+        
+    except Exception as e:
+        flash(f"Fiyat takibi eklenirken hata oluştu: {str(e)}", "error")
+    
+    return redirect(url_for("price_tracking"))
+
+@app.route("/price-tracking/<tracking_id>/history")
+@login_required
+def get_price_history(tracking_id):
+    """Fiyat geçmişini JSON olarak döndür"""
+    import sqlite3
+    from datetime import datetime, timedelta
+    
+    conn = sqlite3.connect('favit.db')
+    cursor = conn.cursor()
+    
+    # Son 30 günün fiyat geçmişini getir
+    thirty_days_ago = datetime.now() - timedelta(days=30)
+    
+    cursor.execute('''
+        SELECT price, recorded_at 
+        FROM price_history 
+        WHERE product_id = ? AND recorded_at >= ?
+        ORDER BY recorded_at ASC
+    ''', (tracking_id, thirty_days_ago))
+    
+    history_data = cursor.fetchall()
+    conn.close()
+    
+    # Veriyi Chart.js için formatla
+    labels = []
+    prices = []
+    
+    for price, recorded_at in history_data:
+        # Tarihi formatla
+        if isinstance(recorded_at, str):
+            dt = datetime.fromisoformat(recorded_at.replace('Z', '+00:00'))
+        else:
+            dt = recorded_at
+        
+        labels.append(dt.strftime('%d.%m'))
+        prices.append(float(price.replace('₺', '').replace('TL', '').replace(',', '').strip()))
+    
+    return jsonify({
+        'labels': labels,
+        'prices': prices
+    })
+
+@app.route("/price-tracking/update-alert", methods=["POST"])
+@login_required
+def update_price_alert():
+    """Fiyat alarmını güncelle"""
+    import sqlite3
+    
+    tracking_id = request.form.get("tracking_id")
+    alert_price = request.form.get("alert_price")
+    
+    if not tracking_id:
+        return jsonify({"success": False, "message": "Takip ID gerekli"})
+    
+    try:
+        conn = sqlite3.connect('favit.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE price_tracking 
+            SET alert_price = ? 
+            WHERE id = ? AND user_id = ?
+        ''', (alert_price, tracking_id, current_user.id))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({"success": True})
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route("/price-tracking/<tracking_id>/remove", methods=["DELETE"])
+@login_required
+def remove_price_tracking(tracking_id):
+    """Fiyat takibini kaldır"""
+    import sqlite3
+    
+    try:
+        conn = sqlite3.connect('favit.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE price_tracking 
+            SET is_active = 0 
+            WHERE id = ? AND user_id = ?
+        ''', (tracking_id, current_user.id))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({"success": True})
+        
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+@app.route("/price-tracking/update-prices")
+@login_required
+def update_prices():
+    """Otomatik fiyat güncellemesi simüle et"""
+    from models import PriceTracking
+    import random
+    
+    tracking_items = PriceTracking.get_user_tracking(current_user.id)
+    updated_count = 0
+    notifications = []
+    
+    for item in tracking_items:
+        tracking_id = item[0]
+        current_price = float(item[3] or 0)
+        original_price = float(item[5] or 0)
+        alert_price = float(item[7] or 0) if item[7] else None
+        
+        # Simüle edilmiş fiyat değişimi (-%10 ile +%5 arası)
+        price_change = random.uniform(-0.1, 0.05)
+        new_price = current_price * (1 + price_change)
+        
+        # Fiyatı güncelle
+        PriceTracking.update_price(tracking_id, new_price)
+        updated_count += 1
+        
+        # Bildirim kontrolü
+        if new_price < current_price:
+            # Fiyat düştü
+            notifications.append({
+                'type': 'price_drop',
+                'message': f"📉 {item[10]} ürününün fiyatı {current_price:.2f}₺'den {new_price:.2f}₺'ye düştü!",
+                'product_name': item[10],
+                'old_price': current_price,
+                'new_price': new_price
+            })
+        
+        elif new_price > current_price:
+            # Fiyat yükseldi
+            notifications.append({
+                'type': 'price_increase',
+                'message': f"📈 {item[10]} ürününün fiyatı {current_price:.2f}₺'den {new_price:.2f}₺'ye yükseldi.",
+                'product_name': item[10],
+                'old_price': current_price,
+                'new_price': new_price
+            })
+        
+        # Alarm kontrolü
+        if alert_price and new_price <= alert_price:
+            notifications.append({
+                'type': 'price_alert',
+                'message': f"🚨 {item[10]} ürünü alarm fiyatına ({alert_price:.2f}₺) ulaştı! Şu anki fiyat: {new_price:.2f}₺",
+                'product_name': item[10],
+                'alert_price': alert_price,
+                'current_price': new_price
+            })
+    
+    return jsonify({
+        "success": True, 
+        "updated": updated_count > 0,
+        "notifications": notifications
+    })
+
+# Bildirim sistemi için yeni rotalar
+@app.route("/notifications")
+@login_required
+def get_notifications():
+    """Kullanıcının bildirimlerini getir"""
+    from models import PriceTracking
+    import random
+    
+    # Simüle edilmiş bildirimler (gerçek uygulamada veritabanından gelecek)
+    notifications = []
+    
+    # Son fiyat güncellemelerinden bildirimler oluştur
+    tracking_items = PriceTracking.get_user_tracking(current_user.id)
+    
+    for item in tracking_items:
+        current_price = float(item[3] or 0)
+        original_price = float(item[5] or 0)
+        alert_price = float(item[7] or 0) if item[7] else None
+        
+        # Fiyat değişimi hesapla
+        price_change = current_price - original_price
+        change_percent = (price_change / original_price) * 100 if original_price > 0 else 0
+        
+        if price_change < 0:
+            # Fiyat düştü
+            notifications.append({
+                'id': f"notif_{len(notifications)}",
+                'type': 'price_drop',
+                'title': 'Fiyat Düştü! 📉',
+                'message': f"{item[10]} ürününün fiyatı %{abs(change_percent):.1f} düştü",
+                'details': f"Eski fiyat: {original_price:.2f}₺ → Yeni fiyat: {current_price:.2f}₺",
+                'product_name': item[10],
+                'timestamp': item[9] if item[9] else 'Şimdi',
+                'is_read': False
+            })
+        elif price_change > 0:
+            # Fiyat yükseldi
+            notifications.append({
+                'id': f"notif_{len(notifications)}",
+                'type': 'price_increase',
+                'title': 'Fiyat Yükseldi 📈',
+                'message': f"{item[10]} ürününün fiyatı %{change_percent:.1f} yükseldi",
+                'details': f"Eski fiyat: {original_price:.2f}₺ → Yeni fiyat: {current_price:.2f}₺",
+                'product_name': item[10],
+                'timestamp': item[9] if item[9] else 'Şimdi',
+                'is_read': False
+            })
+        
+        # Alarm kontrolü
+        if alert_price and current_price <= alert_price:
+            notifications.append({
+                'id': f"notif_{len(notifications)}",
+                'type': 'price_alert',
+                'title': 'Fiyat Alarmı! 🚨',
+                'message': f"{item[10]} ürünü alarm fiyatına ulaştı",
+                'details': f"Alarm fiyatı: {alert_price:.2f}₺, Şu anki fiyat: {current_price:.2f}₺",
+                'product_name': item[10],
+                'timestamp': item[9] if item[9] else 'Şimdi',
+                'is_read': False
+            })
+    
+    return jsonify({
+        "success": True,
+        "notifications": notifications,
+        "unread_count": len([n for n in notifications if not n['is_read']])
+    })
+
+@app.route("/notifications/mark-read/<notification_id>", methods=["POST"])
+@login_required
+def mark_notification_read(notification_id):
+    """Bildirimi okundu olarak işaretle"""
+    # Gerçek uygulamada veritabanında güncellenecek
+    return jsonify({"success": True})
+
+@app.route("/notifications/mark-all-read", methods=["POST"])
+@login_required
+def mark_all_notifications_read():
+    """Tüm bildirimleri okundu olarak işaretle"""
+    # Gerçek uygulamada veritabanında güncellenecek
+    return jsonify({"success": True})
+
+# Yeni rotalar: Ürünleri fiyat takibine ekleme/kaldırma
+@app.route("/product/<product_id>/add-to-tracking", methods=["POST"])
+@login_required
+def add_product_to_tracking(product_id):
+    """Ürünü fiyat takibine ekle"""
+    from models import PriceTracking, Product
+    
+    try:
+        # Ürünü kontrol et
+        product = Product.get_by_id(product_id)
+        if not product:
+            return jsonify({"success": False, "message": "Ürün bulunamadı"})
+        
+        # Kullanıcının bu ürünü zaten takip edip etmediğini kontrol et
+        existing_tracking = PriceTracking.get_by_product_and_user(product_id, current_user.id)
+        if existing_tracking:
+            return jsonify({"success": False, "message": "Bu ürün zaten takip ediliyor"})
+        
+        # Fiyatı sayısal değere çevir
+        try:
+            price_str = product.price.replace('₺', '').replace(',', '').strip()
+            current_price = float(price_str)
+        except:
+            current_price = 0.0
+        
+        # Fiyat takibine ekle
+        tracking_id = PriceTracking.create(
+            product_id=product_id,
+            user_id=current_user.id,
+            current_price=current_price,
+            original_price=current_price,
+            alert_price=current_price * 0.9  # %10 indirim alarmı
+        )
+        
+        if tracking_id:
+            return jsonify({
+                "success": True, 
+                "message": f"{product.name} fiyat takibine eklendi",
+                "tracking_id": tracking_id
+            })
+        else:
+            return jsonify({"success": False, "message": "Fiyat takibi eklenirken hata oluştu"})
+            
+    except Exception as e:
+        print(f"[HATA] Fiyat takibi ekleme hatası: {e}")
+        return jsonify({"success": False, "message": "Bir hata oluştu"})
+
+@app.route("/product/<product_id>/remove-from-tracking", methods=["POST"])
+@login_required
+def remove_product_from_tracking(product_id):
+    """Ürünü fiyat takibinden kaldır"""
+    from models import PriceTracking, Product
+    
+    try:
+        # Ürünü kontrol et
+        product = Product.get_by_id(product_id)
+        if not product:
+            return jsonify({"success": False, "message": "Ürün bulunamadı"})
+        
+        # Takip kaydını bul ve kaldır
+        tracking = PriceTracking.get_by_product_and_user(product_id, current_user.id)
+        if not tracking:
+            return jsonify({"success": False, "message": "Bu ürün takip edilmiyor"})
+        
+        success = PriceTracking.remove_tracking(tracking[0])  # tracking[0] = tracking_id
+        
+        if success:
+            return jsonify({
+                "success": True, 
+                "message": f"{product.name} fiyat takibinden kaldırıldı"
+            })
+        else:
+            return jsonify({"success": False, "message": "Fiyat takibi kaldırılırken hata oluştu"})
+            
+    except Exception as e:
+        print(f"[HATA] Fiyat takibi kaldırma hatası: {e}")
+        return jsonify({"success": False, "message": "Bir hata oluştu"})
+
+@app.route("/product/<product_id>/tracking-status")
+@login_required
+def get_product_tracking_status(product_id):
+    """Ürünün fiyat takip durumunu kontrol et"""
+    from models import PriceTracking
+    
+    try:
+        tracking = PriceTracking.get_by_product_and_user(product_id, current_user.id)
+        is_tracked = tracking is not None
+        
+        return jsonify({
+            "success": True,
+            "is_tracked": is_tracked,
+            "tracking_id": tracking[0] if tracking else None
+        })
+        
+    except Exception as e:
+        print(f"[HATA] Takip durumu kontrol hatası: {e}")
+        return jsonify({"success": False, "is_tracked": False})
+
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return redirect(url_for("index"))
+
+if __name__ == "__main__":
+    # Veritabanını başlat
+    from models import init_db
+    init_db()
+    print("[INFO] Veritabanı başlatıldı")
+    
+    # Port ayarı - ortam değişkeninden veya varsayılan 8080
+    port = int(os.environ.get('PORT', 8080))
+    host = os.environ.get('HOST', '0.0.0.0')
+    
+    print(f"[INFO] Uygulama başlatılıyor...")
+    print(f"[INFO] Host: {host}")
+    print(f"[INFO] Port: {port}")
+    print(f"[INFO] URL: http://localhost:{port}")
+    
+    app.run(host=host, port=port, debug=True)

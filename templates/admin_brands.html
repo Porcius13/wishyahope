@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markalar Yönetimi - Kataloggia</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #000000;
+            --secondary-color: #ffffff;
+            --accent-color: #333333;
+            --text-color: #000000;
+            --bg-color: #ffffff;
+            --card-bg: #f9f9f9;
+            --border-color: #e0e0e0;
+            --sidebar-width: 280px;
+            --header-height: 70px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Styles (Copied from dashboard) */
+        .sidebar {
+            width: var(--sidebar-width);
+            background-color: var(--bg-color);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+            z-index: 100;
+            padding: 2rem;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+            letter-spacing: -0.5px;
+            color: var(--primary-color);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            color: #666;
+            text-decoration: none;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .nav-item:hover,
+        .nav-item.active {
+            background-color: var(--primary-color);
+            color: var(--secondary-color);
+        }
+
+        .nav-item i {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: var(--sidebar-width);
+            padding: 2rem;
+            background-color: #fff;
+        }
+
+        .page-header {
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .page-title {
+            font-size: 1.8rem;
+            font-weight: 600;
+        }
+
+        /* Brands Grid */
+        .brands-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .brand-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .brand-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            border-color: var(--primary-color);
+        }
+
+        .brand-icon {
+            width: 60px;
+            height: 60px;
+            background: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            font-size: 1.5rem;
+            color: var(--primary-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .brand-name {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .brand-count {
+            color: #666;
+            font-size: 0.9rem;
+            background: #eee;
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <a href="/" class="logo">
+            <i class="fas fa-layer-group"></i>
+            KATALOGGIA
+        </a>
+
+        <nav class="nav-menu">
+            <a href="/dashboard" class="nav-item">
+                <i class="fas fa-home"></i>
+                <span>Ana Sayfa</span>
+            </a>
+            <a href="/profile/collections" class="nav-item">
+                <i class="fas fa-bookmark"></i>
+                <span>Koleksiyonlar</span>
+            </a>
+            <a href="/profile/favorites" class="nav-item">
+                <i class="fas fa-heart"></i>
+                <span>Favoriler</span>
+            </a>
+            <a href="/price-tracking" class="nav-item">
+                <i class="fas fa-chart-line"></i>
+                <span>Fiyat Takibi</span>
+            </a>
+            <div style="margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #eee;">
+                <div style="padding: 0 1rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: #999; font-weight: 600;">
+                    YÖNETİM</div>
+                <a href="/admin/brands" class="nav-item active">
+                    <i class="fas fa-tags"></i>
+                    <span>Markalar</span>
+                </a>
+            </div>
+        </nav>
+
+        <div class="user-profile"
+            style="margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border-top: 1px solid #eee;">
+            <div
+                style="width: 40px; height: 40px; background: #000; color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                {{ user.username[0].upper() }}
+            </div>
+            <div style="flex: 1; overflow: hidden;">
+                <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{
+                    user.username }}</div>
+                <a href="/logout" style="font-size: 0.8rem; color: #666; text-decoration: none;">Çıkış Yap</a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <header class="page-header">
+            <h1 class="page-title">Markalar</h1>
+        </header>
+
+        <div class="brands-grid">
+            {% for brand in brands %}
+            <div class="brand-card">
+                <div class="brand-icon">
+                    <i class="fas fa-tag"></i>
+                </div>
+                <h3 class="brand-name">{{ brand.name }}</h3>
+                <span class="brand-count">{{ brand.count }} Ürün</span>
+            </div>
+            {% else %}
+            <div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: #666;">
+                <i class="fas fa-info-circle" style="font-size: 2rem; margin-bottom: 1rem; display: block;"></i>
+                Henüz hiç marka bulunmuyor.
+            </div>
+            {% endfor %}
+        </div>
+    </main>
+</body>
+
+</html>
