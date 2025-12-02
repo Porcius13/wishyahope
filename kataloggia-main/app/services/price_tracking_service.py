@@ -2,8 +2,11 @@
 Price Tracking Service
 Background price checking service
 """
+import json
+
 from app.models.price_tracking import PriceTracking
 from app.services.scraping_service import ScrapingService
+from models import Notification
 
 class PriceTrackingService:
     """Price tracking business logic"""
@@ -114,10 +117,24 @@ class PriceTrackingService:
             price_changed = change_amount < -0.5
             
             if price_changed:
-                # TODO: Ürün modelinde price update implement edilebilir
+                # Takip kaydını bul ve fiyatı güncelle
                 tracking = PriceTracking.get_by_product_and_user(product_id, product.user_id)
                 if tracking:
                     PriceTracking.update_price(tracking[0], new_price)
+
+                    # Fiyat düşüşü bildirimi oluştur
+                    Notification.create(
+                        user_id=product.user_id,
+                        product_id=product.id,
+                        type='PRICE_DROP' if change_amount < 0 else 'PRICE_CHANGE',
+                        message=f"{product.name} fiyatı değişti: {old_price} → {new_price}",
+                        payload={
+                            "old_price": old_price,
+                            "new_price": new_price,
+                            "change": change_amount,
+                            "percentage": change_info.get('percentage', 0)
+                        }
+                    )
             
             return {
                 'product_id': product_id,

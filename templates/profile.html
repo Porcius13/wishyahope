@@ -150,12 +150,37 @@
         }
 
         .profile-header {
-            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 24px;
             margin-bottom: 60px;
-            padding: 0;
-            background: transparent;
-            border: none;
-            box-shadow: none;
+            padding-bottom: 40px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .profile-avatar {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .profile-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .profile-header-main {
+            flex: 1;
         }
 
         .profile-title {
@@ -170,10 +195,24 @@
         .profile-subtitle {
             font-size: 14px;
             color: var(--text-secondary);
-            margin-bottom: 40px;
+            margin-bottom: 16px;
             font-weight: 400;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+        }
+
+        .avatar-upload-form {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+        }
+
+        .avatar-upload-form input[type="file"] {
+            font-size: 11px;
         }
 
         .profile-stats {
@@ -310,8 +349,23 @@
     <!-- Main Content -->
     <main class="main-content">
         <div class="profile-header">
-            <h1 class="profile-title">PROFİL</h1>
-            <p class="profile-subtitle">{{ user.username }} / {{ user.email }}</p>
+            <div class="profile-avatar">
+                {% if user.avatar_url %}
+                <img src="{{ url_for('static', filename=user.avatar_url) }}" alt="{{ user.username }} avatar">
+                {% else %}
+                {{ user.username[:1]|upper }}
+                {% endif %}
+            </div>
+            <div class="profile-header-main">
+                <h1 class="profile-title">PROFİL</h1>
+                <p class="profile-subtitle">{{ user.username }} / {{ user.email }}</p>
+                <form class="avatar-upload-form" method="POST" action="/profile/avatar"
+                    enctype="multipart/form-data">
+                    <label for="avatar">Profil resmi:</label>
+                    <input type="file" id="avatar" name="avatar" accept="image/*">
+                    <button type="submit" class="nav-btn" style="font-size: 11px;">YÜKLE</button>
+                </form>
+            </div>
         </div>
 
         <!-- Stats -->
@@ -357,6 +411,11 @@
                 <span class="action-icon">📊</span>
                 <h3 class="action-title">FİYAT TAKİBİ</h3>
                 <p class="action-description">Fiyat değişimlerini ve alarmları görüntüle</p>
+            </a>
+            <a href="/profile/import-issues" class="action-card">
+                <span class="action-icon">⚠️</span>
+                <h3 class="action-title">PROBLEMLİ ÜRÜNLER</h3>
+                <p class="action-description">Eklenemeyen veya eksik bilgiyle gelen linkleri incele</p>
             </a>
         </div>
     </main>

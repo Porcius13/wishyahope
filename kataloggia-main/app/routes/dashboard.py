@@ -23,6 +23,7 @@ def index():
 def add_product():
     """Ürün ekle (URL'den scrape ederek)"""
     try:
+        from models import ProductImportIssue
         # Debug: Check what we're receiving
         print(f"[DEBUG] Request method: {request.method}")
         print(f"[DEBUG] Content-Type: {request.content_type}")
@@ -50,12 +51,20 @@ def add_product():
         print(f"[DEBUG] Extracted product_url: {product_url}")
         
         if not product_url:
+            error_msg = 'URL gerekli'
+            # Kayıt altına al
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url or '',
+                status='failed',
+                reason=error_msg
+            )
             if request.is_json:
                 return jsonify({
                     'success': False,
-                    'error': 'URL gerekli'
+                    'error': error_msg
                 }), 400
-            flash('URL gerekli', 'error')
+            flash(error_msg, 'error')
             return redirect(url_for('dashboard.index'))
         
         # URL'den ürün bilgilerini çek
@@ -66,6 +75,12 @@ def add_product():
         if not scraped_data:
             error_msg = 'Ürün bilgileri çekilemedi. Lütfen geçerli bir e-ticaret sitesi URL\'si girin.'
             print(f"[ERROR] Scraping failed for URL: {product_url}")
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='failed',
+                reason=error_msg
+            )
             if request.is_json:
                 return jsonify({
                     'success': False,
@@ -77,6 +92,13 @@ def add_product():
         if not scraped_data.get('name'):
             error_msg = 'Ürün adı bulunamadı. Lütfen geçerli bir ürün URL\'si girin.'
             print(f"[ERROR] Product name not found in scraped data: {scraped_data}")
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='failed',
+                reason=error_msg,
+                raw_data=scraped_data
+            )
             if request.is_json:
                 return jsonify({
                     'success': False,
@@ -85,6 +107,13 @@ def add_product():
             flash(error_msg, 'error')
             return redirect(url_for('dashboard.index'))
         
+        # Eksik bilgi kontrolü (partial)
+        partial_reasons = []
+        if not scraped_data.get('old_price'):
+            partial_reasons.append('Eski fiyat bulunamadı')
+        if not scraped_data.get('discount_message'):
+            partial_reasons.append('İndirim bilgisi bulunamadı')
+
         # Ürünü oluştur
         product = product_service.create_product(
             user_id=current_user.id,
@@ -98,6 +127,16 @@ def add_product():
             discount_percentage=scraped_data.get('discount_percentage'),
             images=scraped_data.get('images')
         )
+
+        # Eğer bazı alanlar eksikse, partial kayıt oluştur
+        if partial_reasons:
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='partial',
+                reason='; '.join(partial_reasons),
+                raw_data=scraped_data
+            )
         
         if request.is_json:
             return jsonify({

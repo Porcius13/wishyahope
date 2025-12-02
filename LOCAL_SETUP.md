@@ -42,14 +42,117 @@ playwright install
 
 ### 4. Ortam Değişkenlerini Ayarlayın
 
-`.env` dosyası oluşturun (veya mevcut olanı düzenleyin):
+Uygulama artık `app/config.Config` ve alt sınıflarını tek merkezi yapılandırma kaynağı olarak kullanır.
+Bu sınıflar, hem Flask yapılandırmasını hem de ham `sqlite3` bağlantıları için kullanılacak
+veritabanı yolunu okur.
 
-```env
-SECRET_KEY=your-secret-key-here
-DATABASE_URL=sqlite:///favit.db
-REDIS_URL=redis://localhost:6379/0
-CELERY_BROKER_URL=redis://localhost:6379/0
-SENTRY_DSN=  # Opsiyonel
+`.env` dosyası oluşturabilir veya kabuk ortam değişkenleri ile değerleri ayarlayabilirsiniz.
+
+## Environment configuration
+
+### Yapılandırma Sınıfları ve Ortam Seçimi
+
+- Uygulama `create_app("development")` ile başlatılır (varsayılan).
+- İsterseniz uygulamayı farklı bir config ile başlatabilirsiniz (örn. `create_app("production")`),
+  ancak şu anda bunu değiştiren ayrı bir ortam değişkeni tanımlamadık.
+- Tüm temel ayarlar `app/config.py` içindeki `Config`, `DevelopmentConfig`, `TestingConfig`,
+  `ProductionConfig` sınıflarında tutulur.
+
+### Desteklenen Ortam Değişkenleri
+
+- **SECRET_KEY**
+  - **Amaç**: Flask oturum imzalama / güvenlik anahtarı.
+  - **Varsayılan**: `favit-secret-key-2025`.
+  - **Öneri**: Production ortamında mutlaka güçlü, rastgele bir değer ile override edin.
+  - **Örnek**:
+    ```bash
+    export SECRET_KEY="super-strong-random-secret"
+    ```
+
+- **DATABASE_PATH**
+  - **Amaç**: Ham `sqlite3` kullanan kodlar (ör. `models.py`, admin sorguları vb.) için
+    SQLite veritabanı dosyasının dosya sistemi yolu.
+  - **Varsayılan**: `favit.db` – proje kök dizininde veya `app/utils/db_path.py` tarafından
+    otomatik bulunan konumda oluşturulur.
+  - **Etki**:
+    - `get_db_connection()` bu yolu kullanarak SQLite bağlantısı açar.
+    - `Config.SQLALCHEMY_DATABASE_URI` de, `DATABASE_URL` tanımlı değilse
+      `sqlite:///{DATABASE_PATH}` olarak ayarlanır. Yani `DATABASE_PATH` değiştiğinde,
+      hem ham sqlite bağlantıları hem de SQLAlchemy URL’si aynı dosyayı kullanır.
+  - **Örnek**:
+    ```bash
+    export DATABASE_PATH="/absolute/path/to/favit_dev.db"
+    ```
+
+- **DATABASE_URL**
+  - **Amaç**: SQLAlchemy stilinde tam veritabanı URL’si (örn. `sqlite:///...`,
+    `postgres://...` vb.).
+  - **Varsayılan**: Ayarlanmazsa, `SQLALCHEMY_DATABASE_URI = sqlite:///{DATABASE_PATH}`
+    olarak hesaplanır.
+  - **Not**:
+    - Basit lokal geliştirme için `DATABASE_URL` zorunlu değildir; yalnızca `DATABASE_PATH`
+      yeterlidir.
+    - Render gibi ortamlarda platform tarafından verilen bir Postgres URL’si
+      `DATABASE_URL` olarak ayarlanabilir.
+  - **Örnek**:
+    ```bash
+    # Lokal SQLite
+    export DATABASE_URL="sqlite:///favit.db"
+
+    # Örnek Postgres (deployment)
+    export DATABASE_URL="postgresql://user:pass@host:5432/dbname"
+    ```
+
+- **REDIS_URL**
+  - **Amaç**: Gelecekte Celery / caching için temel Redis URL’si.
+  - **Varsayılan**: `redis://localhost:6379/0`.
+  - **Not**: `CELERY_BROKER_URL` ve `CELERY_RESULT_BACKEND` tanımlı değilse bu değeri kullanır.
+  - **Örnek**:
+    ```bash
+    export REDIS_URL="redis://localhost:6379/0"
+    ```
+
+- **CELERY_BROKER_URL**
+  - **Amaç**: Celery mesaj kuyruğu (broker) URL’si (genelde Redis veya RabbitMQ).
+  - **Varsayılan**: `REDIS_URL` değeri.
+  - **Örnek**:
+    ```bash
+    export CELERY_BROKER_URL="redis://localhost:6379/1"
+    ```
+
+- **CELERY_RESULT_BACKEND**
+  - **Amaç**: Celery result backend URL’si.
+  - **Varsayılan**: `REDIS_URL` değeri.
+  - **Örnek**:
+    ```bash
+    export CELERY_RESULT_BACKEND="redis://localhost:6379/2"
+    ```
+
+- **JWT_SECRET_KEY**
+  - **Amaç**: JWT token’ları için gizli anahtar (kullanıldığında).
+  - **Varsayılan**: `SECRET_KEY` değeri kullanılır.
+  - **Öneri**: JWT aktif olarak kullanılıyorsa production ortamında ayrı ve güçlü
+    bir değer ile override edin.
+  - **Örnek**:
+    ```bash
+    export JWT_SECRET_KEY="separate-jwt-secret"
+    ```
+
+### Lokal geliştirme örnekleri
+
+Basit lokal geliştirme için genelde varsayılanlar yeterlidir:
+
+```bash
+# Sanal ortamı aktive ettikten sonra
+python run.py
+```
+
+İsterseniz ortam değişkenlerini açıkça ayarlayabilirsiniz:
+
+```bash
+export SECRET_KEY="dev-secret"
+export DATABASE_PATH="/absolute/path/to/favit_dev.db"
+python run.py
 ```
 
 ### 5. Veritabanını Başlatın

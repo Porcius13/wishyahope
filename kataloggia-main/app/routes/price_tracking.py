@@ -1,10 +1,14 @@
 """
 Price Tracking routes
 """
+from datetime import datetime, timedelta
+import re
+
 from flask import Blueprint, jsonify, request, render_template
 from flask_login import login_required, current_user
 from app.services.price_tracking_service import PriceTrackingService
 from app.models.price_tracking import PriceTracking
+from app.utils.db_path import get_db_connection
 
 bp = Blueprint('price_tracking', __name__, url_prefix='/price-tracking')
 price_tracking_service = PriceTrackingService()
@@ -111,32 +115,74 @@ def get_price_history(tracking_id):
             
         if tracking[2] != current_user.id:  # user_id check
             return jsonify({'error': 'Yetkisiz erişim'}), 403
-            
-        # Geçmiş verilerini getir (şimdilik mock data veya mevcut veriden türetme)
-        # Gerçek uygulamada PriceHistory tablosundan çekilmeli
-        
-        # Şimdilik basit bir grafik için mevcut fiyatı ve birkaç mock veri dönelim
-        import random
-        from datetime import datetime, timedelta
-        
-        current_price = float(str(tracking[3]).replace(',', '.')) if tracking[3] else 0
-        
+
+        product_id = tracking[1]
+        current_price = tracking[3]
+
+        # Gerçek fiyat geçmişi verilerini getir
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            # Eski verilerde product_id yerine tracking_id saklanmış olabileceği için ikisini de kontrol et
+            cursor.execute(
+                '''
+                SELECT price, recorded_at
+                FROM price_history
+                WHERE product_id = ? OR product_id = ?
+                ORDER BY datetime(recorded_at) ASC
+                LIMIT 60
+                ''',
+                (str(product_id), str(tracking_id))
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+
+        def _parse_price(value):
+            if value is None:
+                return 0.0
+            s = str(value)
+            s = s.replace('₺', '').replace('TL', '').replace(' ', '')
+            s = s.replace('.', '').replace(',', '.')
+            try:
+                return float(s)
+            except Exception:
+                cleaned = re.sub(r'[^0-9\.-]', '', s)
+                try:
+                    return float(cleaned)
+                except Exception:
+                    return 0.0
+
         labels = []
         prices = []
-        
-        # Son 7 gün için veri oluştur
-        for i in range(6, -1, -1):
-            date = datetime.now() - timedelta(days=i)
-            labels.append(date.strftime('%d.%m'))
-            
-            # Rastgele fiyat değişimi simülasyonu (gerçek veri yoksa)
-            if i == 0:
-                prices.append(current_price)
-            else:
-                variation = random.uniform(-0.05, 0.05)
-                simulated_price = current_price * (1 + variation)
-                prices.append(round(simulated_price, 2))
-                
+
+        for price_value, ts in rows:
+            ts_str = str(ts)
+            dt = None
+            try:
+                # Python 3.11+ supports fromisoformat for "YYYY-MM-DD HH:MM:SS[.ffffff]"
+                dt = datetime.fromisoformat(ts_str)
+            except Exception:
+                try:
+                    dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    dt = None
+
+            label = dt.strftime('%d.%m') if dt else ts_str
+            labels.append(label)
+            prices.append(_parse_price(price_value))
+
+        # Eğer hiç gerçek veri yoksa, önceki davranışa benzer basit bir fallback kullan
+        if not labels:
+            labels = []
+            prices = []
+            base_price = _parse_price(current_price)
+            for i in range(6, -1, -1):
+                date = datetime.now() - timedelta(days=i)
+                labels.append(date.strftime('%d.%m'))
+                prices.append(base_price)
+
         return jsonify({
             'labels': labels,
             'prices': prices

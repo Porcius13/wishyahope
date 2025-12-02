@@ -1,12 +1,15 @@
 import sqlite3
 import uuid
+import json
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 
+from app.utils.db_path import get_db_path, get_db_connection
+
 def init_db():
     """Veritabanını başlat"""
-    conn = sqlite3.connect('favit.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Kullanıcılar tablosu
@@ -17,7 +20,9 @@ def init_db():
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            profile_url TEXT UNIQUE
+            profile_url TEXT UNIQUE,
+            last_read_notifications_at TIMESTAMP,
+            avatar_url TEXT
         )
     ''')
     
@@ -65,9 +70,15 @@ def init_db():
     except:
         pass  # Kolon zaten varsa hata vermez
 
-    # Users tablosuna last_read_notifications_at ekle
+    # Users tablosuna last_read_notifications_at ekle (backward compatibility)
     try:
         cursor.execute('ALTER TABLE users ADD COLUMN last_read_notifications_at TIMESTAMP')
+    except:
+        pass
+
+    # Users tablosuna avatar_url ekle (backward compatibility)
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
     except:
         pass
 
@@ -163,12 +174,42 @@ def init_db():
             UNIQUE(user_id, product_id)
         )
     ''')
+
+    # Bildirimler tablosu
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            product_id TEXT,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            payload TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            read_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (product_id) REFERENCES products (id)
+        )
+    ''')
+
+    # Ürün import sorunları tablosu (başarısız veya eksik bilgiyle yüklenenler)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS product_import_issues (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            status TEXT NOT NULL, -- failed | partial
+            reason TEXT,
+            raw_data TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
     
     conn.commit()
     conn.close()
 
 class User(UserMixin):
-    def __init__(self, id, username, email, password_hash, created_at, profile_url, last_read_notifications_at=None):
+    def __init__(self, id, username, email, password_hash, created_at, profile_url, last_read_notifications_at=None, avatar_url=None):
         self.id = id
         self.username = username
         self.email = email
@@ -176,27 +217,33 @@ class User(UserMixin):
         self.created_at = created_at
         self.profile_url = profile_url
         self.last_read_notifications_at = last_read_notifications_at
+        self.avatar_url = avatar_url
     
     @staticmethod
     def get_by_id(user_id):
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
         user_data = cursor.fetchone()
         conn.close()
         
         if user_data:
-            # Handle variable number of columns (backward compatibility)
-            if len(user_data) > 6:
-                return User(*user_data)
-            else:
+            # Backward compatibility: users tablosu kolon sayısı değişebiliyor
+            if len(user_data) == 6:
+                # id, username, email, password_hash, created_at, profile_url
+                return User(*user_data, None, None)
+            elif len(user_data) == 7:
+                # last_read_notifications_at ekli
                 return User(*user_data, None)
+            else:
+                # last_read_notifications_at + avatar_url
+                return User(*user_data)
         return None
     
     @staticmethod
     def get_by_username(username):
         """Kullanıcı adına göre kullanıcı getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
         user_data = cursor.fetchone()
@@ -212,7 +259,7 @@ class User(UserMixin):
     @staticmethod
     def get_by_email(email):
         """Email'e göre kullanıcı getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
         user_data = cursor.fetchone()
@@ -227,7 +274,7 @@ class User(UserMixin):
     
     @staticmethod
     def get_by_profile_url(profile_url):
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE profile_url = ?', (profile_url,))
         user_data = cursor.fetchone()
@@ -248,18 +295,18 @@ class User(UserMixin):
             profile_url = f"user_{user_id[:8]}"
             password_hash = generate_password_hash(password)
             
-            conn = sqlite3.connect('favit.db')
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO users (id, username, email, password_hash, profile_url, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, username, email, password_hash, profile_url, datetime.now()))
+                INSERT INTO users (id, username, email, password_hash, profile_url, created_at, last_read_notifications_at, avatar_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, username, email, password_hash, profile_url, datetime.now(), None, None))
             
             conn.commit()
             conn.close()
             
-            return User(user_id, username, email, password_hash, datetime.now(), profile_url)
+            return User(user_id, username, email, password_hash, datetime.now(), profile_url, None, None)
         except sqlite3.IntegrityError as e:
             print(f"[HATA] Veritabanı bütünlük hatası: {e}")
             raise Exception("Bu kullanıcı adı veya email zaten kullanılıyor")
@@ -273,7 +320,7 @@ class User(UserMixin):
     
     def get_products(self):
         """Kullanıcının ürünlerini getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM products WHERE user_id = ? ORDER BY created_at DESC', (self.id,))
         products = cursor.fetchall()
@@ -284,6 +331,99 @@ class User(UserMixin):
     def get_collections(self):
         """Kullanıcının koleksiyonlarını getir"""
         return Collection.get_user_collections(self.id)
+
+    def set_password(self, new_password):
+        """Kullanıcının şifresini güncelle ve veritabanına kaydet"""
+        try:
+            new_hash = generate_password_hash(new_password)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE users SET password_hash = ? WHERE id = ?',
+                (new_hash, self.id)
+            )
+            conn.commit()
+            conn.close()
+            self.password_hash = new_hash
+        except Exception as e:
+            print(f"[HATA] Şifre güncelleme hatası: {e}")
+            raise
+
+    def save(self):
+        """Kullanıcı adını / e-postayı güncellemek için basit save metodu"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE users SET username = ?, email = ? WHERE id = ?',
+                (self.username, self.email, self.id)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[HATA] Kullanıcı kaydetme hatası: {e}")
+            raise
+
+
+class ProductImportIssue:
+    """Ürün eklenirken yaşanan sorunları (başarısız/eksik) saklar"""
+
+    def __init__(self, id, user_id, url, status, reason, raw_data, created_at):
+        self.id = id
+        self.user_id = user_id
+        self.url = url
+        self.status = status  # failed | partial
+        self.reason = reason
+        self.raw_data = raw_data
+        self.created_at = created_at
+
+    @staticmethod
+    def create(user_id, url, status, reason=None, raw_data=None):
+        """Yeni import sorunu kaydı oluştur"""
+        issue_id = str(uuid.uuid4())
+
+        # raw_data'yı JSON string'e çevir
+        import json
+        raw_str = None
+        if raw_data is not None:
+            try:
+                raw_str = json.dumps(raw_data, ensure_ascii=False)
+            except Exception:
+                raw_str = str(raw_data)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO product_import_issues (id, user_id, url, status, reason, raw_data, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (issue_id, user_id, url, status, reason, raw_str, datetime.now())
+        )
+        conn.commit()
+        conn.close()
+
+        return ProductImportIssue(issue_id, user_id, url, status, reason, raw_str, datetime.now())
+
+    @staticmethod
+    def get_by_user_id(user_id, limit=50):
+        """Kullanıcının son import sorunlarını getir"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT id, user_id, url, status, reason, raw_data, created_at
+            FROM product_import_issues
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            ''',
+            (user_id, limit)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [ProductImportIssue(*row) for row in rows]
 
 class Product:
     def __init__(self, id, user_id, name, price, image, brand, url, created_at, old_price=None, current_price=None, discount_percentage=None, images=None, discount_info=None):
@@ -323,7 +463,7 @@ class Product:
             # Eğer images verilmemişse, image'i kullan
             images_json = json.dumps([image]) if image else None
         
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -339,7 +479,7 @@ class Product:
     @staticmethod
     def get_by_id(product_id):
         """ID ile ürün getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM products WHERE id = ?', (product_id,))
         product_data = cursor.fetchone()
@@ -352,7 +492,7 @@ class Product:
     @staticmethod
     def update(product_id, user_id, **kwargs):
         """Ürün güncelle"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Güncellenecek alanları hazırla
@@ -387,7 +527,8 @@ class Product:
     @staticmethod
     def delete(product_id, user_id):
         """Ürün sil - Transaction safe"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
+        conn = get_db_connection()
         cursor = conn.cursor()
         try:
             # Önce ürünün kullanıcıya ait olduğunu kontrol et
@@ -445,7 +586,7 @@ class Collection:
         collection_id = str(uuid.uuid4())
         share_url = f"collection_{collection_id[:8]}"
         
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -461,7 +602,7 @@ class Collection:
     @staticmethod
     def get_by_id(collection_id):
         """ID ile koleksiyon getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM collections WHERE id = ?', (collection_id,))
         collection_data = cursor.fetchone()
@@ -474,7 +615,7 @@ class Collection:
     @staticmethod
     def get_by_share_url(share_url):
         """Share URL ile koleksiyon getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM collections WHERE share_url = ?', (share_url,))
         collection_data = cursor.fetchone()
@@ -487,7 +628,7 @@ class Collection:
     @staticmethod
     def get_user_collections(user_id):
         """Kullanıcının koleksiyonlarını getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM collections WHERE user_id = ? ORDER BY created_at DESC', (user_id,))
         collections = cursor.fetchall()
@@ -499,7 +640,7 @@ class Collection:
     
     def get_products(self):
         """Koleksiyondaki ürünleri getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT p.* FROM products p
@@ -514,7 +655,7 @@ class Collection:
     
     def add_product(self, product_id):
         """Koleksiyona ürün ekle - Race condition safe"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
@@ -549,7 +690,7 @@ class Collection:
     
     def remove_product(self, product_id):
         """Koleksiyondan ürün çıkar"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('DELETE FROM collection_products WHERE collection_id = ? AND product_id = ?', (self.id, product_id))
@@ -563,7 +704,7 @@ class Collection:
     
     def delete(self):
         """Koleksiyonu sil - Transaction safe"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         try:
             # Önce koleksiyon ürünlerini sil
@@ -595,7 +736,7 @@ class PriceTracking:
     @staticmethod
     def create(user_id, product_id, current_price, original_price=None, alert_price=None):
         """Fiyat takibi oluştur"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         tracking_id = str(uuid.uuid4())
@@ -621,7 +762,7 @@ class PriceTracking:
     @staticmethod
     def get_by_id(tracking_id):
         """ID ile takip getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM price_tracking WHERE id = ?', (tracking_id,))
         row = cursor.fetchone()
@@ -636,7 +777,7 @@ class PriceTracking:
     @staticmethod
     def get_by_product_and_user(product_id, user_id):
         """Belirli bir ürün için kullanıcının takip kaydını getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, product_id, user_id, current_price, price_change, 
@@ -652,7 +793,7 @@ class PriceTracking:
     @staticmethod
     def remove_tracking(tracking_id):
         """Fiyat takibini kaldır (pasif hale getir)"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -669,7 +810,7 @@ class PriceTracking:
     @staticmethod
     def get_user_tracking(user_id):
         """Kullanıcının fiyat takiplerini getir"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT pt.id, pt.product_id, pt.user_id, pt.current_price, pt.price_change, 
@@ -688,23 +829,22 @@ class PriceTracking:
     @staticmethod
     def update_price(tracking_id, new_price):
         """Fiyat güncelle"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Mevcut fiyatı al
-        cursor.execute('SELECT current_price, original_price FROM price_tracking WHERE id = ?', (tracking_id,))
+        # Mevcut fiyatı ve ürün bilgisini al
+        cursor.execute('SELECT product_id, current_price, original_price FROM price_tracking WHERE id = ?', (tracking_id,))
         current_data = cursor.fetchone()
         
         if current_data:
-            current_price = current_data[0]
-            original_price = current_data[1]
+            product_id, current_price, original_price = current_data
             
             # Fiyat değişimini hesapla
             try:
                 current_num = float(str(current_price).replace('₺', '').replace('TL', '').replace(',', '').strip())
                 new_num = float(str(new_price).replace('₺', '').replace('TL', '').replace(',', '').strip())
                 price_change = new_num - current_num
-            except:
+            except Exception:
                 price_change = 0
             
             # Fiyat takibini güncelle
@@ -714,12 +854,12 @@ class PriceTracking:
                 WHERE id = ?
             ''', (new_price, str(price_change), datetime.now(), tracking_id))
             
-            # Fiyat geçmişine ekle
+            # Fiyat geçmişine doğru product_id ile kayıt ekle
             history_id = str(uuid.uuid4())
             cursor.execute('''
                 INSERT INTO price_history (id, product_id, price)
                 VALUES (?, ?, ?)
-            ''', (history_id, tracking_id, new_price))
+            ''', (history_id, product_id, new_price))
             
             conn.commit()
             conn.close()
@@ -727,6 +867,88 @@ class PriceTracking:
         
         conn.close()
         return False
+
+
+class Notification:
+    """Persisted user notifications (e.g. price drops)"""
+
+    def __init__(self, id, user_id, product_id, type, message, payload, created_at, read_at):
+        self.id = id
+        self.user_id = user_id
+        self.product_id = product_id
+        self.type = type
+        self.message = message
+        self.payload = payload
+        self.created_at = created_at
+        self.read_at = read_at
+
+    @staticmethod
+    def create(user_id, product_id=None, type='PRICE_DROP', message='', payload=None):
+        """Yeni bildirim oluştur"""
+        notif_id = str(uuid.uuid4())
+
+        payload_str = None
+        if payload is not None:
+            if isinstance(payload, str):
+                payload_str = payload
+            else:
+                try:
+                    payload_str = json.dumps(payload, ensure_ascii=False)
+                except Exception:
+                    payload_str = str(payload)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            INSERT INTO notifications (id, user_id, product_id, type, message, payload, created_at, read_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (notif_id, user_id, product_id, type, message, payload_str, datetime.now(), None)
+        )
+        conn.commit()
+        conn.close()
+
+        return notif_id
+
+    @staticmethod
+    def get_for_user(user_id, limit=50):
+        """Kullanıcının bildirimlerini getir (yeniden eskiye doğru)"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            SELECT id, user_id, product_id, type, message, payload, created_at, read_at
+            FROM notifications
+            WHERE user_id = ?
+            ORDER BY datetime(created_at) DESC
+            LIMIT ?
+            ''',
+            (user_id, limit)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [Notification(*row) for row in rows]
+
+    @staticmethod
+    def mark_all_read(user_id):
+        """Kullanıcının tüm okunmamış bildirimlerini okundu işaretle"""
+        conn = get_db_connection()
+        conn = get_db_connection()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+        cursor.execute(
+            '''
+            UPDATE notifications
+            SET read_at = ?
+            WHERE user_id = ? AND read_at IS NULL
+            ''',
+            (now, user_id)
+        )
+        conn.commit()
+        conn.close()
 
 class Favorite:
     def __init__(self, id, user_id, product_id, created_at):
@@ -738,7 +960,7 @@ class Favorite:
     @staticmethod
     def create(user_id, product_id):
         """Favori ekle"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
@@ -761,7 +983,7 @@ class Favorite:
     @staticmethod
     def delete(user_id, product_id):
         """Favoriden çıkar"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         try:
@@ -777,7 +999,7 @@ class Favorite:
     @staticmethod
     def get_user_favorites(user_id):
         """Kullanıcının favorilerini getir (Product objeleri olarak)"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -795,7 +1017,7 @@ class Favorite:
     @staticmethod
     def check_favorite(user_id, product_id):
         """Favori kontrolü"""
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute('SELECT 1 FROM favorites WHERE user_id = ? AND product_id = ?', (user_id, product_id))

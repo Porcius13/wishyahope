@@ -1,8 +1,9 @@
 import sqlite3
+from app.utils.db_path import get_db_connection
 
 def check_database():
     try:
-        conn = sqlite3.connect('favit.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # Tabloları kontrol et

@@ -571,9 +571,19 @@
     visibility: hidden;
     transform: translateY(-10px);
     transition: var(--transition);
-    max-height: 200px;
-    overflow-y: auto;
     margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+}
+
+.dropdown-list {
+    max-height: 200px;      /* B, Z, A gibi koleksiyon listesi için scroll alanı */
+    overflow-y: auto;
+}
+
+.dropdown-footer {
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
 .dropdown-content.show {

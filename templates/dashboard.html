@@ -134,6 +134,41 @@
             align-items: center;
         }
 
+        .header-upload-progress {
+            position: absolute;
+            left: 0;
+            right: 40px;
+            bottom: -4px;
+            height: 2px;
+            background: rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            border-radius: 999px;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        [data-theme="dark"] .header-upload-progress {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .header-upload-progress.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .header-upload-progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #000000, #555555);
+            transform-origin: left center;
+            transition: width 0.25s ease;
+        }
+
+        [data-theme="dark"] .header-upload-progress-bar {
+            background: linear-gradient(90deg, #ffffff, #999999);
+        }
+
         .header-search input {
             width: 100%;
             padding: 12px 0;
@@ -1347,6 +1382,10 @@
             <div class="header-search">
                 <input type="text" id="header-search-input" placeholder="LINK" autocomplete="off">
                 <button type="button" id="header-search-btn" class="header-search-btn" title="Ürün Ekle">➤</button>
+                <!-- Uploading / Progress Bar -->
+                <div class="header-upload-progress" id="header-upload-progress">
+                    <div class="header-upload-progress-bar" id="header-upload-progress-bar"></div>
+                </div>
             </div>
             <div class="header-actions">
                 <nav class="nav-links">
@@ -1484,9 +1523,9 @@
                         onclick="toggleFavorite('{{ product.id }}')">
                         <span class="heart">{% if product.is_favorite %}❤️{% else %}🤍{% endif %}</span>
                     </div>
-                    <div class="tracking-alarm-icon" data-product-id="{{ product.id }}" title="Fiyat Takibi"
+                    <div class="tracking-alarm-icon" data-product-id="{{ product.id }}" title="Fiyat Etiketi"
                         onclick="togglePriceTracking('{{ product.id }}'); event.stopPropagation();">
-                        <span class="alarm-icon">🔔</span>
+                        <span class="alarm-icon">🏷️</span>
                     </div>
 
                 </div>
@@ -1511,12 +1550,16 @@
                                 <button type="button" class="add-to-collection-btn"
                                     onclick="toggleDropdown('{{ product.id }}')" title="Koleksiyona Ekle">+</button>
                                 <div class="dropdown-content" id="dropdown-{{ product.id }}">
-                                    {% for collection in current_user.get_collections() %}
-                                    <button type="button" class="dropdown-item" data-collection-id="{{ collection.id }}"
-                                        data-product-id="{{ product.id }}"
-                                        data-collection-name="{{ collection.name }}">{{ collection.name }}</button>
-                                    {% endfor %}
-                                    <a href="/profile/collections" class="dropdown-item">+ Yeni Koleksiyon</a>
+                                    <div class="dropdown-list">
+                                        {% for collection in current_user.get_collections() %}
+                                        <button type="button" class="dropdown-item" data-collection-id="{{ collection.id }}"
+                                            data-product-id="{{ product.id }}"
+                                            data-collection-name="{{ collection.name }}">{{ collection.name }}</button>
+                                        {% endfor %}
+                                    </div>
+                                    <div class="dropdown-footer">
+                                        <a href="/profile/collections" class="dropdown-item">+ Yeni Koleksiyon</a>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1632,6 +1675,8 @@
         // Header search functionality
         const headerSearchInput = document.getElementById('header-search-input');
         const headerSearchBtn = document.getElementById('header-search-btn');
+        const headerUploadProgress = document.getElementById('header-upload-progress');
+        const headerUploadProgressBar = document.getElementById('header-upload-progress-bar');
 
         function addProductFromHeader() {
             if (!headerSearchInput) {
@@ -1676,6 +1721,45 @@
                 }
             }
 
+            // Progress bar başlangıcı
+            let progressValue = 0;
+            if (headerUploadProgress && headerUploadProgressBar) {
+                headerUploadProgress.classList.add('active');
+                headerUploadProgressBar.style.width = '0%';
+            }
+
+            // Gerçek zamanlı his veren sahte ilerleme (backend % vermezse)
+            let progressTimer = null;
+            const startFakeProgress = () => {
+                if (!headerUploadProgressBar) return;
+                progressValue = 0;
+                headerUploadProgressBar.style.width = '0%';
+                progressTimer = setInterval(() => {
+                    // 0-85% arası yavaşça ilerlesin, backend bitirince %100'e çekeriz
+                    if (progressValue < 85) {
+                        progressValue += Math.random() * 8;
+                        if (progressValue > 85) progressValue = 85;
+                        headerUploadProgressBar.style.width = `${progressValue}%`;
+                    }
+                }, 300);
+            };
+
+            const finishProgress = (success = true) => {
+                if (!headerUploadProgress || !headerUploadProgressBar) return;
+                if (progressTimer) {
+                    clearInterval(progressTimer);
+                    progressTimer = null;
+                }
+                headerUploadProgressBar.style.width = success ? '100%' : '0%';
+                // Biraz bekleyip barı gizle
+                setTimeout(() => {
+                    headerUploadProgress.classList.remove('active');
+                    headerUploadProgressBar.style.width = '0%';
+                }, success ? 600 : 300);
+            };
+
+            startFakeProgress();
+
             // Use fetch API instead of form submit for better error handling
             if (typeof toast !== 'undefined' && toast) {
                 toast.info('Ürün ekleniyor...');
@@ -1704,16 +1788,21 @@
                     // If redirect (status 302 or 301), reload page
                     if (response.status === 302 || response.status === 301 || response.redirected) {
                         console.log('[DEBUG] Redirect detected, reloading page');
+                        finishProgress(true);
                         window.location.reload();
                         return null;
                     }
 
                     // Try to parse as JSON if content-type is JSON
                     if (contentType && contentType.includes('application/json')) {
-                        return response.json();
+                        return response.json().then(data => {
+                            finishProgress(data && data.success !== false);
+                            return data;
+                        });
                     } else {
                         // If not JSON, it's probably HTML (redirect response)
                         console.log('[DEBUG] Non-JSON response, reloading page');
+                        finishProgress(true);
                         window.location.reload();
                         return null;
                     }
@@ -1730,6 +1819,7 @@
                                 window.location.reload();
                             }, 1500);
                         } else {
+                            finishProgress(false);
                             if (typeof toast !== 'undefined' && toast) {
                                 toast.error(data.error || 'Ürün eklenirken bir hata oluştu');
                             }
@@ -1742,12 +1832,23 @@
                 })
                 .catch(error => {
                     console.error('[HATA] Ürün ekleme hatası:', error);
+                    finishProgress(false);
                     if (headerSearchBtn) {
                         headerSearchBtn.disabled = false;
                         headerSearchBtn.innerHTML = originalBtnContent;
                     }
                     if (typeof toast !== 'undefined' && toast) {
                         toast.error('Ürün eklenirken bir hata oluştu. Lütfen tekrar deneyin.');
+                    }
+                })
+                .finally(() => {
+                    // Ek güvenlik: buton state'ini toparla
+                    if (headerSearchBtn) {
+                        headerSearchBtn.disabled = false;
+                        if (typeof LoadingManager !== 'undefined' && LoadingManager) {
+                            LoadingManager.hideButton(headerSearchBtn);
+                        }
+                        headerSearchBtn.innerHTML = originalBtnContent;
                     }
                 });
         }
@@ -2082,10 +2183,14 @@
             const searchTerm = productSearch ? productSearch.value.toLowerCase() : '';
             const selectedBrand = brandFilter ? brandFilter.value.toLowerCase() : '';
             const sortBy = sortSelect ? sortSelect.value : 'newest';
-            const minPrice = minPriceInput ? (parseFloat(minPriceInput.value) || 0) : 0;
-            const maxPrice = maxPriceInput ? (parseFloat(maxPriceInput.value) || Infinity) : Infinity;
+            
+            // Parse price inputs - check if they have values, not just if they're truthy
+            const minPriceValue = minPriceInput ? minPriceInput.value.trim() : '';
+            const maxPriceValue = maxPriceInput ? maxPriceInput.value.trim() : '';
+            const minPrice = minPriceValue !== '' ? (parseFloat(minPriceValue) || null) : null;
+            const maxPrice = maxPriceValue !== '' ? (parseFloat(maxPriceValue) || null) : null;
 
-            console.log('Filtering and sorting:', { searchTerm, selectedBrand, sortBy, minPrice, maxPrice });
+            console.log('Filtering and sorting:', { searchTerm, selectedBrand, sortBy, minPrice, maxPrice, minPriceValue, maxPriceValue });
 
             // Get all products and convert to array for sorting
             let products = Array.from(productCards);
@@ -2107,12 +2212,23 @@
                 });
             }
 
-            // Filter by price range
-            if (minPrice > 0 || maxPrice < Infinity) {
+            // Filter by price range - only filter if at least one value is provided
+            if (minPrice !== null || maxPrice !== null) {
                 products = products.filter(card => {
                     const priceText = card.querySelector('.product-price').textContent;
-                    const price = parseFloat(priceText.replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
-                    return price >= minPrice && price <= maxPrice;
+                    // Improved price parsing: remove currency symbols, spaces, handle Turkish number format
+                    const cleanedPrice = priceText.replace(/[₺TL\s]/g, '').replace(/\./g, '').replace(',', '.');
+                    const price = parseFloat(cleanedPrice) || 0;
+                    
+                    // Check min price constraint
+                    if (minPrice !== null && price < minPrice) {
+                        return false;
+                    }
+                    // Check max price constraint
+                    if (maxPrice !== null && price > maxPrice) {
+                        return false;
+                    }
+                    return true;
                 });
             }
 
@@ -2529,10 +2645,10 @@
 
             if (isTracked) {
                 button.classList.add('tracking-active');
-                button.querySelector('.alarm-icon').textContent = '🔕';
+                button.querySelector('.alarm-icon').textContent = '🏷️';
             } else {
                 button.classList.remove('tracking-active');
-                button.querySelector('.alarm-icon').textContent = '🔔';
+                button.querySelector('.alarm-icon').textContent = '🏷️';
             }
         }
 

@@ -249,15 +249,23 @@ def register():
             'error': str(e)
         }), 500
 
-@bp.route('/logout', methods=['POST'])
+@bp.route('/logout', methods=['GET', 'POST'])
 @login_required
 def logout():
-    """Logout API"""
+    """Logout - hem API hem de basit link tıklaması için."""
     logout_user()
-    return jsonify({
-        'success': True,
-        'message': 'Çıkış başarılı'
-    }), 200
+
+    # JSON bekleyen istekler için JSON cevap
+    if request.is_json or request.method == 'POST':
+        return jsonify({
+            'success': True,
+            'message': 'Çıkış başarılı'
+        }), 200
+
+    # Normal link tıklaması (GET) için dashboard / login sayfasına yönlendir
+    from flask import redirect, url_for, flash
+    flash('Çıkış yapıldı.', 'success')
+    return redirect(url_for('main.index'))
 
 @bp.route('/me', methods=['GET'])
 @login_required

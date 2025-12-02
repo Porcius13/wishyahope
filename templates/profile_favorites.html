@@ -311,6 +311,18 @@
             left: 0;
             margin-top: 10px;
             border: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .dropdown-list {
+            max-height: 220px;        /* B, Z, A alanı için scroll */
+            overflow-y: auto;
+        }
+
+        .dropdown-footer {
+            border-top: 1px solid var(--glass-border);
+            flex-shrink: 0;
         }
 
         .dropdown-item {
@@ -547,14 +559,18 @@
                                 <button type="button" class="add-to-collection-btn"
                                     onclick="toggleDropdown('{{ product.id }}')" title="Koleksiyona Ekle">+</button>
                                 <div class="dropdown-content" id="dropdown-{{ product.id }}">
-                                    {% for collection in current_user.get_collections() %}
-                                    <form method="POST"
-                                        action="/collections/{{ collection.id }}/add_product/{{ product.id }}"
-                                        style="display: inline;">
-                                        <button type="submit" class="dropdown-item">{{ collection.name }}</button>
-                                    </form>
-                                    {% endfor %}
-                                    <a href="/collections/create" class="dropdown-item">+ Yeni Koleksiyon</a>
+                                    <div class="dropdown-list">
+                                        {% for collection in current_user.get_collections() %}
+                                        <form method="POST"
+                                            action="/collections/{{ collection.id }}/add_product/{{ product.id }}"
+                                            style="display: inline;">
+                                            <button type="submit" class="dropdown-item">{{ collection.name }}</button>
+                                        </form>
+                                        {% endfor %}
+                                    </div>
+                                    <div class="dropdown-footer">
+                                        <a href="/collections/create" class="dropdown-item">+ Yeni Koleksiyon</a>
+                                    </div>
                                 </div>
                             </div>
                             <form method="POST" action="/delete_product/{{ product.id }}" style="display: inline;">

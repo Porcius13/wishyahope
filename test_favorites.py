@@ -1,4 +1,5 @@
 import sqlite3
+from app.utils.db_path import get_db_connection
 import uuid
 from datetime import datetime
 from models import Favorite, User, Product, init_db
@@ -13,7 +14,7 @@ def test_favorites():
     user_id = str(uuid.uuid4())
     product_id = str(uuid.uuid4())
     
-    conn = sqlite3.connect('favit.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Insert dummy user
@@ -70,7 +71,7 @@ def test_favorites():
         print("FAIL: Favorite check returned True")
 
     # Cleanup
-    conn = sqlite3.connect('favit.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
     cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))

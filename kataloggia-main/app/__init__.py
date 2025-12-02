@@ -6,6 +6,8 @@ from flask import Flask
 from flask_login import LoginManager
 import os
 
+from app.config import config as app_config
+
 # Try to import SocketIO
 try:
     from flask_socketio import SocketIO
@@ -34,14 +36,13 @@ def create_app(config_name='development'):
     template_dir = os.path.join(parent_dir, 'templates')
     static_dir = os.path.join(parent_dir, 'static')
     
-    app = Flask(__name__, 
+    app = Flask(__name__,
                 template_folder=template_dir,
                 static_folder=static_dir)
-    
-    # Configuration
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'favit-secret-key-2025')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///favit.db')
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+    # Apply configuration from central config mapping
+    cfg_class = app_config.get(config_name, app_config['default'])
+    app.config.from_object(cfg_class)
     
     # Initialize extensions
     login_manager.init_app(app)

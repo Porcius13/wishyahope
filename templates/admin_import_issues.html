@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Problemli Ürünler</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/les-benjamins-theme.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/modern-ui.css') }}">
+    <style>
+        .main-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 60px 40px;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .page-title {
+            font-size: 22px;
+            letter-spacing: 0.1em;
+        }
+
+        .page-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 16px;
+            margin-top: 20px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+
+        .admin-nav a {
+            text-decoration: none;
+            color: var(--text-secondary);
+        }
+
+        .admin-nav a:hover {
+            color: var(--text-primary);
+        }
+
+        .issues-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 30px;
+            font-size: 13px;
+        }
+
+        .issues-table thead {
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 11px;
+        }
+
+        .issues-table th,
+        .issues-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .issues-table th {
+            color: var(--text-secondary);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+        }
+
+        .status-failed {
+            border: 1px solid rgba(255, 68, 68, 0.6);
+            color: var(--error-text);
+        }
+
+        .status-partial {
+            border: 1px solid rgba(255, 193, 7, 0.6);
+            color: var(--text-primary);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .status-failed .status-dot {
+            background: #ff4444;
+        }
+
+        .status-partial .status-dot {
+            background: #ffc107;
+        }
+
+        .url-cell {
+            max-width: 260px;
+            word-break: break-all;
+        }
+
+        .reason-cell {
+            max-width: 380px;
+            white-space: pre-wrap;
+        }
+
+        .mono {
+            font-family: "SF Mono", Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+
+        .badge-small {
+            display: inline-block;
+            margin-top: 6px;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-secondary);
+        }
+
+        .empty-state {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">wıshya</a>
+            <nav class="nav-links">
+                <a href="/dashboard" class="nav-btn">DASHBOARD</a>
+                <a href="/profile" class="nav-btn">PROFİL</a>
+                <a href="/logout" class="nav-btn">ÇIKIŞ</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">ADMIN / PROBLEMLİ ÜRÜNLER</h1>
+                <p class="page-subtitle">Eklenemeyen veya eksik bilgiyle yüklenen linklerin tam listesi</p>
+
+                <div class="admin-nav">
+                    <a href="{{ url_for('admin.users') }}">KULLANICILAR</a>
+                    <a href="{{ url_for('admin.products') }}">ÜRÜNLER</a>
+                    <a href="{{ url_for('admin.brands') }}">MARKALAR</a>
+                    <a href="{{ url_for('admin.import_issues') }}">PROBLEMLİ ÜRÜNLER</a>
+                </div>
+            </div>
+        </div>
+
+        {% if issues %}
+            <table class="issues-table">
+                <thead>
+                    <tr>
+                        <th>TARİH</th>
+                        <th>KULLANICI</th>
+                        <th>DURUM</th>
+                        <th>ÜRÜN LİNKİ</th>
+                        <th>AÇIKLAMA</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for issue in issues %}
+                    <tr>
+                        <td>
+                            {{ issue.created_at }}
+                            <div class="badge-small">
+                                {{ loop.index }} / {{ issues|length }}
+                            </div>
+                        </td>
+                        <td>
+                            {% if issue.username %}
+                                {{ issue.username }} <span class="mono">({{ issue.user_id }})</span>
+                            {% else %}
+                                <span class="mono">{{ issue.user_id }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="status-pill status-{{ issue.status }}">
+                                <span class="status-dot"></span>
+                                {% if issue.status == 'failed' %}
+                                    YÜKLENEMEDİ
+                                {% else %}
+                                    EKSİK BİLGİ
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td class="url-cell mono">
+                            <a href="{{ issue.url }}" target="_blank">{{ issue.url }}</a>
+                        </td>
+                        <td class="reason-cell">
+                            {{ issue.reason_text }}
+                            {% if issue.reason %}
+                                <br><span class="mono">({{ issue.reason }})</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="empty-state">
+                Şu anda problemli ürün kaydı bulunmuyor.
+                <br>
+                <span class="badge-small">Eklenemeyen linkler burada listelenecek</span>
+            </div>
+        {% endif %}
+    </main>
+</body>
+</html>
+
+
+

@@ -43,6 +43,10 @@ class DatabaseIndexer:
             "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
             "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
             "CREATE INDEX IF NOT EXISTS idx_users_profile_url ON users(profile_url)",
+            
+            # Notifications indexes
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user_created_at ON notifications(user_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user_read_at ON notifications(user_id, read_at)",
         ]
         
         for index_sql in indexes:

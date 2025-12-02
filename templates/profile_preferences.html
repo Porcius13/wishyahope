@@ -516,5 +516,39 @@
             </div>
         </form>
     </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Sayfa ilk açıldığında session'daki tema bilgisini localStorage ve DOM'a uygula
+            const themeSelect = document.querySelector('select[name="theme"]');
+            let initialTheme = 'light';
+            if (themeSelect) {
+                initialTheme = themeSelect.value || 'light';
+            }
+            document.documentElement.setAttribute('data-theme', initialTheme);
+            localStorage.setItem('theme', initialTheme);
+
+            // Tema seçimi değiştiğinde anında uygula
+            if (themeSelect) {
+                themeSelect.addEventListener('change', function () {
+                    const newTheme = this.value || 'light';
+                    document.documentElement.setAttribute('data-theme', newTheme);
+                    localStorage.setItem('theme', newTheme);
+                });
+            }
+
+            // Form submit olurken de en son seçilen temayı kaydet
+            const form = document.querySelector('form.preferences-card');
+            if (form) {
+                form.addEventListener('submit', function () {
+                    if (themeSelect) {
+                        const selectedTheme = themeSelect.value || 'light';
+                        document.documentElement.setAttribute('data-theme', selectedTheme);
+                        localStorage.setItem('theme', selectedTheme);
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html> 

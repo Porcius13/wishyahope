@@ -1,3 +1,16 @@
+"""
+LEGACY MONOLITHIC BACKEND (DEPRECATED)
+--------------------------------------
+
+This file contains the old single-file Flask application that was used
+before the modular `app/` package and `create_app()` factory were
+introduced.
+
+It is kept only for reference and for a few legacy tests/scripts.
+**Do not add new features here.** All new backend code must live under
+`kataloggia-main/app/` and be wired through `create_app()`.
+"""
+
 import uuid
 import asyncio
 import re

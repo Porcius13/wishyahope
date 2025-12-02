@@ -182,8 +182,9 @@
             transition: border-color 0.2s ease;
             font-family: inherit;
             font-weight: 400;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            /* Kullanıcı girişini normal bırak, sadece placeholder ve label üstte kalsın */
+            text-transform: none;
+            letter-spacing: 0.02em;
         }
         
         .form-group input:focus {
@@ -198,6 +199,29 @@
             font-size: 11px;
             letter-spacing: 0.1em;
         }
+
+        .password-wrapper {
+            position: relative;
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            border: none;
+            background: transparent;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+        }
+
+        .password-toggle:hover {
+            color: var(--text-primary);
+        }
         
         /* Remember Me Checkbox - Les Benjamins Style */
         .remember-me {
@@ -205,7 +229,7 @@
         }
         
         .checkbox-label {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             cursor: pointer;
             font-size: 11px;
@@ -214,42 +238,17 @@
             user-select: none;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            gap: 8px;
         }
-        
+
         .checkbox-label input[type="checkbox"] {
-            display: none;
+            width: 14px;
+            height: 14px;
+            margin: 0;
+            vertical-align: middle;
         }
         
-        .checkmark {
-            width: 18px;
-            height: 18px;
-            border: 1px solid var(--border-color);
-            border-radius: 0;
-            margin-right: 10px;
-            position: relative;
-            background: transparent;
-            transition: all 0.2s ease;
-        }
-        
-        .checkbox-label:hover .checkmark {
-            border-color: var(--text-primary);
-        }
-        
-        .checkbox-label input[type="checkbox"]:checked + .checkmark {
-            background: var(--text-primary);
-            border-color: var(--text-primary);
-        }
-        
-        .checkbox-label input[type="checkbox"]:checked + .checkmark::after {
-            content: '×';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: var(--bg-primary);
-            font-size: 14px;
-            font-weight: 300;
-        }
+        /* Eski custom checkmark kaldırıldı; tarayıcının kendi kutusu kullanılacak */
         
         .submit-btn {
             width: 100%;
@@ -450,14 +449,16 @@
                 
                 <div class="form-group">
                     <label for="password">Şifre</label>
-                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                    <div class="password-wrapper">
+                        <input type="password" id="password" name="password" required autocomplete="current-password">
+                        <button type="button" class="password-toggle" data-target="password">GÖSTER</button>
+                    </div>
                 </div>
                 
                 <div class="form-group remember-me">
-                    <label class="checkbox-label">
+                    <label class="checkbox-label" for="remember">
                         <input type="checkbox" id="remember" name="remember" value="1">
-                        <span class="checkmark"></span>
-                        Beni hatırla
+                        <span>Beni hatırla</span>
                     </label>
                 </div>
                 
@@ -469,6 +470,22 @@
             </div>
         </div>
     </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggles = document.querySelectorAll('.password-toggle');
+            toggles.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetId = btn.getAttribute('data-target');
+                    const input = document.getElementById(targetId);
+                    if (!input) return;
+                    const isPassword = input.type === 'password';
+                    input.type = isPassword ? 'text' : 'password';
+                    btn.textContent = isPassword ? 'GİZLE' : 'GÖSTER';
+                });
+            });
+        });
+    </script>
 
     <script>
         // Dark mode functionality

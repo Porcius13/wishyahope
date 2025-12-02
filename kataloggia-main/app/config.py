@@ -1,14 +1,31 @@
 """
 Configuration settings
+Central place for secrets, database paths/URLs and future Redis/Celery config.
 """
 import os
 from datetime import timedelta
 
+
 class Config:
     """Base configuration"""
+
+    # Core secret
     SECRET_KEY = os.environ.get('SECRET_KEY', 'favit-secret-key-2025')
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///favit.db')
+
+    # Database path for raw sqlite3 usage (non-SQLAlchemy code)
+    DATABASE_PATH = os.environ.get('DATABASE_PATH', 'favit.db')
+
+    # SQLAlchemy URL: prefer DATABASE_URL, fall back to sqlite with DATABASE_PATH
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        'DATABASE_URL',
+        f'sqlite:///{DATABASE_PATH}',
+    )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Redis / Celery (for future use)
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL)
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', REDIS_URL)
     
     # Cache settings
     CACHE_TYPE = 'simple'

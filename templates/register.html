@@ -181,8 +181,9 @@
             transition: border-color 0.2s ease;
             font-family: inherit;
             font-weight: 400;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            /* Üyelik bilgileri normal yazılsın; sadece label/placeholder uppercase kalsın */
+            text-transform: none;
+            letter-spacing: 0.02em;
         }
         
         .form-group input:focus {
@@ -196,6 +197,29 @@
             text-transform: uppercase;
             font-size: 11px;
             letter-spacing: 0.1em;
+        }
+
+        .password-wrapper {
+            position: relative;
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            border: none;
+            background: transparent;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0;
+        }
+
+        .password-toggle:hover {
+            color: var(--text-primary);
         }
         
         .submit-btn {
@@ -402,12 +426,18 @@
                 
                 <div class="form-group">
                     <label for="password">Şifre</label>
-                    <input type="password" id="password" name="password" required>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" name="password" required>
+                        <button type="button" class="password-toggle" data-target="password">GÖSTER</button>
+                    </div>
                 </div>
                 
                 <div class="form-group">
                     <label for="confirm_password">Şifre Tekrar</label>
-                    <input type="password" id="confirm_password" name="confirm_password" required>
+                    <div class="password-wrapper">
+                        <input type="password" id="confirm_password" name="confirm_password" required>
+                        <button type="button" class="password-toggle" data-target="confirm_password">GÖSTER</button>
+                    </div>
                 </div>
                 
                 <button type="submit" class="submit-btn">Kayıt Ol</button>
@@ -418,6 +448,22 @@
             </div>
         </div>
     </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const toggles = document.querySelectorAll('.password-toggle');
+            toggles.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetId = btn.getAttribute('data-target');
+                    const input = document.getElementById(targetId);
+                    if (!input) return;
+                    const isPassword = input.type === 'password';
+                    input.type = isPassword ? 'text' : 'password';
+                    btn.textContent = isPassword ? 'GİZLE' : 'GÖSTER';
+                });
+            });
+        });
+    </script>
 
     <script>
         // Dark mode functionality

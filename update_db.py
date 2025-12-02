@@ -2,6 +2,7 @@
 
 import sqlite3
 from models import init_db
+from app.utils.db_path import get_db_connection
 
 def update_database():
     """Veritabanını güncelle ve eksik kolonları ekle"""
@@ -12,7 +13,7 @@ def update_database():
     init_db()
     
     # Eksik kolonları manuel olarak ekle
-    conn = sqlite3.connect('favit.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Mevcut kolonları kontrol et
