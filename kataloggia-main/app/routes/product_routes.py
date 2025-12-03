@@ -10,27 +10,20 @@ bp = Blueprint('product_routes', __name__)
 @bp.route('/<product_id>/tracking-status')
 @login_required
 def get_tracking_status(product_id):
-    """Get price tracking status for a product"""
+    """Get price tracking status for a product (Repository pattern)"""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        from app.repositories import get_repository
         
-        cursor.execute('''
-            SELECT is_active, last_checked, current_price, original_price, price_change
-            FROM price_tracking 
-            WHERE product_id = ? AND user_id = ?
-        ''', (product_id, current_user.id))
+        repo = get_repository()
+        tracking_data = repo.get_price_tracking_by_product_and_user(product_id, current_user.id)
         
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
+        if tracking_data:
             return jsonify({
-                'is_tracking': bool(row[0]),
-                'last_checked': row[1],
-                'current_price': row[2],
-                'original_price': row[3],
-                'price_change': row[4]
+                'is_tracking': tracking_data.get('is_active', True),
+                'last_checked': tracking_data.get('last_checked'),
+                'current_price': tracking_data.get('current_price'),
+                'original_price': tracking_data.get('original_price'),
+                'price_change': tracking_data.get('price_change', '0')
             })
         else:
             return jsonify({
@@ -43,15 +36,17 @@ def get_tracking_status(product_id):
             
     except Exception as e:
         print(f"[ERROR] Get tracking status error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/<product_id>/add-to-tracking', methods=['POST'])
 @login_required
 def add_to_tracking(product_id):
-    """Add product to price tracking"""
+    """Add product to price tracking (Repository pattern)"""
     try:
         from app.models.product import Product
-        from app.models.price_tracking import PriceTracking
+        from models import PriceTracking
 
         # Check if product exists
         product = Product.get_by_id(product_id)
@@ -61,28 +56,33 @@ def add_to_tracking(product_id):
         # Check if already tracking
         existing = PriceTracking.get_by_product_and_user(product_id, current_user.id)
         if existing:
-            return jsonify({'success': False, 'message': 'Bu ürün zaten takip ediliyor'}), 400
+            # Idempotent davran: zaten takipteyse 200 dön ve mesaj ver
+            return jsonify({'success': True, 'message': 'Bu ürün zaten takip ediliyor'}), 200
 
         # Create tracking
-        PriceTracking.create(
+        print(f"[DEBUG add_to_tracking] Creating tracking for product: {product_id}, user: {current_user.id}")
+        tracking_id = PriceTracking.create(
             user_id=current_user.id,
             product_id=product_id,
             current_price=product.price,
             original_price=product.price
         )
+        print(f"[DEBUG add_to_tracking] Tracking created: {tracking_id}")
 
         return jsonify({'success': True, 'message': 'Fiyat takibi başlatıldı'})
 
     except Exception as e:
         print(f"[ERROR] Add to tracking error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @bp.route('/<product_id>/remove-from-tracking', methods=['POST'])
 @login_required
 def remove_from_tracking(product_id):
-    """Remove product from price tracking"""
+    """Remove product from price tracking (Repository pattern)"""
     try:
-        from app.models.price_tracking import PriceTracking
+        from models import PriceTracking
 
         # Check if tracking exists
         existing = PriceTracking.get_by_product_and_user(product_id, current_user.id)
@@ -91,12 +91,19 @@ def remove_from_tracking(product_id):
 
         # Remove tracking (existing is a tuple, id is at index 0)
         tracking_id = existing[0]
-        PriceTracking.remove_tracking(tracking_id)
+        print(f"[DEBUG remove_from_tracking] Removing tracking: {tracking_id}")
+        result = PriceTracking.remove_tracking(tracking_id)
+        print(f"[DEBUG remove_from_tracking] Result: {result}")
 
-        return jsonify({'success': True, 'message': 'Fiyat takibi durduruldu'})
+        if result:
+            return jsonify({'success': True, 'message': 'Fiyat takibi durduruldu'})
+        else:
+            return jsonify({'success': False, 'message': 'Takip durdurulamadı'}), 500
 
     except Exception as e:
         print(f"[ERROR] Remove from tracking error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @bp.route('/<product_id>/favorite', methods=['POST'])

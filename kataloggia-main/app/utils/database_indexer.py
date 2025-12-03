@@ -9,7 +9,22 @@ class DatabaseIndexer:
     
     @staticmethod
     def create_indexes():
-        """Performans için indexler oluştur"""
+        """Performans için indexler oluştur (sadece SQLite için)"""
+        from app.config import Config
+        
+        # Check if using Firestore
+        try:
+            db_backend = Config.DB_BACKEND
+        except:
+            import os
+            db_backend = os.environ.get('DB_BACKEND', 'sqlite')
+        
+        if db_backend == 'firestore':
+            # Firestore indexes are created manually in Firebase Console
+            print("[INFO] Firestore kullanılıyor - index'ler Firebase Console'dan oluşturulmalı")
+            return
+        
+        # SQLite indexing
         from app.utils.db_path import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()

@@ -6,8 +6,11 @@ import argparse
 import sys
 import os
 
-# Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add current directory and parent directory to path (for models.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
 
 def main():
     parser = argparse.ArgumentParser(description='Favit uygulamasını çalıştır')
@@ -48,12 +51,12 @@ def main():
     debug_mode = not args.no_debug if args.no_debug else (args.debug or True)
 
     print(f"\n{'='*50}")
-    print("🚀 Favit Uygulaması Başlatılıyor")
+    print("Favit Uygulaması Başlatılıyor")
     print(f"{'='*50}")
-    print(f"📍 Host: {args.host}")
-    print(f"🔌 Port: {args.port}")
-    print(f"🐛 Debug: {debug_mode}")
-    print(f"🌐 URL: http://localhost:{args.port}")
+    print(f"Host: {args.host}")
+    print(f"Port: {args.port}")
+    print(f"Debug: {debug_mode}")
+    print(f"URL: http://localhost:{args.port}")
     print(f"{'='*50}\n")
 
     socketio = get_socketio()

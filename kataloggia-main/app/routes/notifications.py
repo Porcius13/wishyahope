@@ -7,7 +7,6 @@ from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user
 
 from models import Notification
-from app.utils.db_path import get_db_connection
 
 bp = Blueprint('notifications', __name__)
 
@@ -63,16 +62,10 @@ def mark_all_read():
         # Update notifications table
         Notification.mark_all_read(current_user.id)
 
-        # Backwards compatibility: also update users.last_read_notifications_at
+        # Backwards compatibility: also update users.last_read_notifications_at via repository-backed model
         now = datetime.now()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'UPDATE users SET last_read_notifications_at = ? WHERE id = ?',
-            (now, current_user.id),
-        )
-        conn.commit()
-        conn.close()
+        current_user.last_read_notifications_at = now
+        current_user.save()
 
         return jsonify({
             'success': True,

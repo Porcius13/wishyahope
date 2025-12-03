@@ -44,6 +44,18 @@ def create_app(config_name='development'):
     cfg_class = app_config.get(config_name, app_config['default'])
     app.config.from_object(cfg_class)
     
+    # Ensure DB_BACKEND is set from environment if available (environment takes precedence)
+    if 'DB_BACKEND' in os.environ:
+        app.config['DB_BACKEND'] = os.environ['DB_BACKEND']
+        print(f"[INFO] DB_BACKEND set from environment: {os.environ['DB_BACKEND']}")
+    else:
+        print(f"[WARNING] DB_BACKEND not set in environment, using config default: {app.config.get('DB_BACKEND', 'sqlite')}")
+    
+    # Reset repository singleton to ensure it uses the correct backend
+    from app.repositories.repository_factory import reset_repository
+    reset_repository()
+    print(f"[INFO] Repository singleton reset to ensure correct backend usage")
+    
     # Initialize extensions
     login_manager.init_app(app)
     

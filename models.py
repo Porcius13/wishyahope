@@ -1,6 +1,7 @@
 import sqlite3
 import uuid
 import json
+import os
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
@@ -9,6 +10,24 @@ from app.utils.db_path import get_db_path, get_db_connection
 
 def init_db():
     """Veritabanını başlat"""
+    import os
+    from app.repositories import get_repository
+    from app.config import Config
+    
+    # Check if using Firestore
+    try:
+        db_backend = Config.DB_BACKEND
+    except:
+        db_backend = os.environ.get('DB_BACKEND', 'sqlite')
+    
+    if db_backend == 'firestore':
+        # Firestore doesn't need schema initialization
+        repo = get_repository()
+        repo.init_db()
+        print("[INFO] Firestore database initialized")
+        return
+    
+    # SQLite initialization
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -79,6 +98,12 @@ def init_db():
     # Users tablosuna avatar_url ekle (backward compatibility)
     try:
         cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
+    except:
+        pass
+
+    # Collections tablosuna cover_image ekle (backward compatibility)
+    try:
+        cursor.execute('ALTER TABLE collections ADD COLUMN cover_image TEXT')
     except:
         pass
 
@@ -221,95 +246,285 @@ class User(UserMixin):
     
     @staticmethod
     def get_by_id(user_id):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if user_data:
-            # Backward compatibility: users tablosu kolon sayısı değişebiliyor
-            if len(user_data) == 6:
-                # id, username, email, password_hash, created_at, profile_url
-                return User(*user_data, None, None)
-            elif len(user_data) == 7:
-                # last_read_notifications_at ekli
-                return User(*user_data, None)
-            else:
-                # last_read_notifications_at + avatar_url
-                return User(*user_data)
-        return None
+        """Kullanıcı ID'sine göre kullanıcı getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            user_data = repo.get_user_by_id(user_id)
+            
+            if user_data:
+                # Handle timestamp conversion
+                created_at = user_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                last_read = user_data.get('last_read_notifications_at')
+                if last_read and hasattr(last_read, 'timestamp'):  # Firestore Timestamp
+                    last_read = last_read
+                elif isinstance(last_read, str):
+                    try:
+                        last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_read = None
+                
+                return User(
+                    user_data.get('id'),
+                    user_data.get('username'),
+                    user_data.get('email'),
+                    user_data.get('password_hash'),
+                    created_at,
+                    user_data.get('profile_url'),
+                    last_read,
+                    user_data.get('avatar_url')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get user by id error: {e}")
+            return None
     
     @staticmethod
     def get_by_username(username):
-        """Kullanıcı adına göre kullanıcı getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if user_data:
-            if len(user_data) > 6:
-                return User(*user_data)
-            else:
-                return User(*user_data, None)
-        return None
+        """Kullanıcı adına göre kullanıcı getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            user_data = repo.get_user_by_username(username)
+            
+            if user_data:
+                # Handle timestamp conversion (same as get_by_id)
+                created_at = user_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                last_read = user_data.get('last_read_notifications_at')
+                if last_read and hasattr(last_read, 'timestamp'):
+                    last_read = last_read
+                elif isinstance(last_read, str):
+                    try:
+                        last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_read = None
+                
+                return User(
+                    user_data.get('id'),
+                    user_data.get('username'),
+                    user_data.get('email'),
+                    user_data.get('password_hash'),
+                    created_at,
+                    user_data.get('profile_url'),
+                    last_read,
+                    user_data.get('avatar_url')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get user by username error: {e}")
+            return None
     
     @staticmethod
     def get_by_email(email):
-        """Email'e göre kullanıcı getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if user_data:
-            if len(user_data) > 6:
-                return User(*user_data)
-            else:
-                return User(*user_data, None)
-        return None
+        """Email'e göre kullanıcı getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            user_data = repo.get_user_by_email(email)
+            
+            if user_data:
+                # Handle timestamp conversion (same as get_by_id)
+                created_at = user_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                last_read = user_data.get('last_read_notifications_at')
+                if last_read and hasattr(last_read, 'timestamp'):
+                    last_read = last_read
+                elif isinstance(last_read, str):
+                    try:
+                        last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_read = None
+                
+                return User(
+                    user_data.get('id'),
+                    user_data.get('username'),
+                    user_data.get('email'),
+                    user_data.get('password_hash'),
+                    created_at,
+                    user_data.get('profile_url'),
+                    last_read,
+                    user_data.get('avatar_url')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get user by email error: {e}")
+            return None
     
     @staticmethod
     def get_by_profile_url(profile_url):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE profile_url = ?', (profile_url,))
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if user_data:
-            if len(user_data) > 6:
-                return User(*user_data)
-            else:
-                return User(*user_data, None)
-        return None
+        """Profile URL'e göre kullanıcı getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            user_data = repo.get_user_by_profile_url(profile_url)
+            
+            if user_data:
+                # Handle timestamp conversion (same as get_by_id)
+                created_at = user_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                last_read = user_data.get('last_read_notifications_at')
+                if last_read and hasattr(last_read, 'timestamp'):
+                    last_read = last_read
+                elif isinstance(last_read, str):
+                    try:
+                        last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_read = None
+                
+                return User(
+                    user_data.get('id'),
+                    user_data.get('username'),
+                    user_data.get('email'),
+                    user_data.get('password_hash'),
+                    created_at,
+                    user_data.get('profile_url'),
+                    last_read,
+                    user_data.get('avatar_url')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get user by profile url error: {e}")
+            return None
     
     @staticmethod
     def create(username, email, password):
         """Yeni kullanıcı oluştur"""
         try:
-            user_id = str(uuid.uuid4())
-            profile_url = f"user_{user_id[:8]}"
+            from app.repositories import get_repository
+            from app.config import Config
+            
+            repo = get_repository()
             password_hash = generate_password_hash(password)
+            profile_url = f"user_{str(uuid.uuid4())[:8]}"
+            created_at = datetime.now()
             
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            # Check if user already exists
+            if repo.get_user_by_username(username):
+                raise Exception("Bu kullanıcı adı zaten kullanılıyor")
+            if repo.get_user_by_email(email):
+                raise Exception("Bu email zaten kullanılıyor")
             
-            cursor.execute('''
-                INSERT INTO users (id, username, email, password_hash, profile_url, created_at, last_read_notifications_at, avatar_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, username, email, password_hash, profile_url, datetime.now(), None, None))
+            # Create user via repository
+            user_id = repo.create_user(
+                username=username,
+                email=email,
+                password_hash=password_hash,
+                profile_url=profile_url,
+                created_at=created_at,
+                last_read_notifications_at=None,
+                avatar_url=None
+            )
             
-            conn.commit()
-            conn.close()
+            # Return User object (fetch from repository to ensure consistency)
+            user_data = repo.get_user_by_id(user_id)
+            if not user_data:
+                raise Exception("Kullanıcı oluşturuldu ama veritabanından okunamadı")
             
-            return User(user_id, username, email, password_hash, datetime.now(), profile_url, None, None)
-        except sqlite3.IntegrityError as e:
-            print(f"[HATA] Veritabanı bütünlük hatası: {e}")
-            raise Exception("Bu kullanıcı adı veya email zaten kullanılıyor")
+            # Convert dict to User object
+            # Handle timestamp conversion for Firestore
+            created_at = user_data.get('created_at')
+            if created_at and hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+                # Firestore Timestamp object, convert to datetime
+                created_at = created_at
+            elif isinstance(created_at, str):
+                try:
+                    created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                except ValueError:
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        created_at = datetime.now()
+            elif created_at is None:
+                created_at = datetime.now()
+            
+            last_read = user_data.get('last_read_notifications_at')
+            if last_read and hasattr(last_read, 'timestamp'):  # Firestore Timestamp
+                last_read = last_read
+            elif isinstance(last_read, str):
+                try:
+                    last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
+                except ValueError:
+                    try:
+                        last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        last_read = None
+            
+            return User(
+                user_data.get('id'),
+                user_data.get('username'),
+                user_data.get('email'),
+                user_data.get('password_hash'),
+                created_at,
+                user_data.get('profile_url'),
+                last_read,
+                user_data.get('avatar_url')
+            )
         except Exception as e:
             print(f"[HATA] Kullanıcı oluşturma hatası: {e}")
             raise Exception(f"Kullanıcı oluşturulamadı: {str(e)}")
@@ -319,47 +534,100 @@ class User(UserMixin):
         return check_password_hash(self.password_hash, password)
     
     def get_products(self):
-        """Kullanıcının ürünlerini getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM products WHERE user_id = ? ORDER BY created_at DESC', (self.id,))
-        products = cursor.fetchall()
-        conn.close()
-        
-        return [Product(*product) for product in products]
+        """Kullanıcının ürünlerini getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            from app.models.product import Product
+            
+            repo = get_repository()
+            products_data = repo.get_products_by_user_id(self.id)
+            
+            products = []
+            for p_data in products_data:
+                # Handle images
+                images_data = p_data.get('images')
+                if isinstance(images_data, str):
+                    import json
+                    try:
+                        images_data = json.loads(images_data)
+                    except:
+                        images_data = [p_data.get('image')] if p_data.get('image') else []
+                elif not images_data:
+                    images_data = [p_data.get('image')] if p_data.get('image') else []
+                
+                # Handle timestamp
+                created_at_data = p_data.get('created_at')
+                if hasattr(created_at_data, 'timestamp'):
+                    created_at_data = created_at_data
+                elif isinstance(created_at_data, str):
+                    try:
+                        created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at_data = datetime.now()
+                elif created_at_data is None:
+                    created_at_data = datetime.now()
+                
+                products.append(Product(
+                    p_data.get('id'),
+                    p_data.get('user_id'),
+                    p_data.get('name'),
+                    p_data.get('price'),
+                    p_data.get('image'),
+                    p_data.get('brand'),
+                    p_data.get('url'),
+                    created_at_data,
+                    p_data.get('old_price'),
+                    p_data.get('current_price'),
+                    p_data.get('discount_percentage'),
+                    images_data,
+                    p_data.get('discount_info')
+                ))
+            
+            return products
+        except Exception as e:
+            print(f"[ERROR] Get user products error: {e}")
+            return []
     
     def get_collections(self):
         """Kullanıcının koleksiyonlarını getir"""
         return Collection.get_user_collections(self.id)
 
     def set_password(self, new_password):
-        """Kullanıcının şifresini güncelle ve veritabanına kaydet"""
+        """Kullanıcının şifresini güncelle ve veritabanına kaydet (Repository pattern)"""
         try:
+            from app.repositories import get_repository
+            
             new_hash = generate_password_hash(new_password)
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                'UPDATE users SET password_hash = ? WHERE id = ?',
-                (new_hash, self.id)
-            )
-            conn.commit()
-            conn.close()
-            self.password_hash = new_hash
+            repo = get_repository()
+            result = repo.update_user(self.id, password_hash=new_hash)
+            
+            if result:
+                self.password_hash = new_hash
+                return True
+            return False
         except Exception as e:
             print(f"[HATA] Şifre güncelleme hatası: {e}")
-            raise
+            return False
 
     def save(self):
-        """Kullanıcı adını / e-postayı güncellemek için basit save metodu"""
+        """Kullanıcı bilgilerini güncellemek için save metodu (Repository üzerinden)"""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                'UPDATE users SET username = ?, email = ? WHERE id = ?',
-                (self.username, self.email, self.id)
+            from app.repositories import get_repository
+
+            repo = get_repository()
+            success = repo.update_user(
+                self.id,
+                username=self.username,
+                email=self.email,
+                avatar_url=self.avatar_url
             )
-            conn.commit()
-            conn.close()
+
+            if not success:
+                raise Exception("User update failed in repository")
+
         except Exception as e:
             print(f"[HATA] Kullanıcı kaydetme hatası: {e}")
             raise
@@ -379,51 +647,91 @@ class ProductImportIssue:
 
     @staticmethod
     def create(user_id, url, status, reason=None, raw_data=None):
-        """Yeni import sorunu kaydı oluştur"""
-        issue_id = str(uuid.uuid4())
+        """Yeni import sorunu kaydı oluştur (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            
+            # raw_data'yı JSON string'e çevir
+            import json
+            raw_str = None
+            if raw_data is not None:
+                try:
+                    raw_str = json.dumps(raw_data, ensure_ascii=False) if not isinstance(raw_data, str) else raw_data
+                except Exception:
+                    raw_str = str(raw_data)
+            
+            issue_id = repo.create_import_issue(
+                user_id=user_id,
+                url=url,
+                status=status,
+                reason=reason,
+                raw_data=raw_str,
+                created_at=datetime.now()
+            )
 
-        # raw_data'yı JSON string'e çevir
-        import json
-        raw_str = None
-        if raw_data is not None:
+            # Basit dosya logu: ürün linki + hata mesajı
             try:
-                raw_str = json.dumps(raw_data, ensure_ascii=False)
-            except Exception:
-                raw_str = str(raw_data)
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(base_dir)
+                logs_dir = os.path.join(project_root, "logs")
+                os.makedirs(logs_dir, exist_ok=True)
+                log_path = os.path.join(logs_dir, "import_issues.log")
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            INSERT INTO product_import_issues (id, user_id, url, status, reason, raw_data, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''',
-            (issue_id, user_id, url, status, reason, raw_str, datetime.now())
-        )
-        conn.commit()
-        conn.close()
+                with open(log_path, "a", encoding="utf-8") as f:
+                    ts = datetime.now().isoformat(timespec="seconds")
+                    safe_reason = (reason or "").replace("\n", " ").strip()
+                    f.write(f"[{ts}] status={status} user_id={user_id} url={url} reason={safe_reason}\n")
+            except Exception as file_err:
+                # Dosyaya yazma hatası uygulamayı bozmasın, sadece logla
+                print(f"[WARN] Could not write import issue to file log: {file_err}")
 
-        return ProductImportIssue(issue_id, user_id, url, status, reason, raw_str, datetime.now())
+            return ProductImportIssue(issue_id, user_id, url, status, reason, raw_str, datetime.now())
+        except Exception as e:
+            print(f"[ERROR] Create import issue error: {e}")
+            raise
 
     @staticmethod
     def get_by_user_id(user_id, limit=50):
-        """Kullanıcının son import sorunlarını getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT id, user_id, url, status, reason, raw_data, created_at
-            FROM product_import_issues
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            ''',
-            (user_id, limit)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [ProductImportIssue(*row) for row in rows]
+        """Kullanıcının son import sorunlarını getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            issues_data = repo.get_import_issues_by_user_id(user_id, limit)
+            
+            issues = []
+            for issue_data in issues_data:
+                # Handle timestamp conversion
+                created_at = issue_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                issues.append(ProductImportIssue(
+                    issue_data.get('id'),
+                    issue_data.get('user_id'),
+                    issue_data.get('url'),
+                    issue_data.get('status'),
+                    issue_data.get('reason'),
+                    issue_data.get('raw_data'),
+                    created_at
+                ))
+            
+            return issues
+        except Exception as e:
+            print(f"[ERROR] Get import issues by user id error: {e}")
+            return []
 
 class Product:
     def __init__(self, id, user_id, name, price, image, brand, url, created_at, old_price=None, current_price=None, discount_percentage=None, images=None, discount_info=None):
@@ -453,115 +761,207 @@ class Product:
     @staticmethod
     def create(user_id, name, price, image, brand, url, old_price=None, current_price=None, discount_percentage=None, images=None, discount_info=None):
         """Yeni ürün oluştur"""
-        product_id = str(uuid.uuid4())
-        
-        # images'i JSON string'e çevir
-        import json
-        if images:
-            images_json = json.dumps(images) if isinstance(images, list) else images
-        else:
-            # Eğer images verilmemişse, image'i kullan
-            images_json = json.dumps([image]) if image else None
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO products (id, user_id, name, price, image, brand, url, old_price, current_price, discount_percentage, images, discount_info, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (product_id, user_id, name, price, image, brand, url, old_price, current_price, discount_percentage, images_json, discount_info, datetime.now()))
-        
-        conn.commit()
-        conn.close()
-        
-        return Product(product_id, user_id, name, price, image, brand, url, datetime.now(), old_price, current_price, discount_percentage, images_json, discount_info)
+        try:
+            from app.repositories import get_repository
+            from app.config import Config
+            
+            # Debug: Check which backend is being used
+            db_backend = Config.DB_BACKEND
+            print(f"[DEBUG Product.create] DB_BACKEND: {db_backend}")
+            
+            repo = get_repository()
+            repo_type = type(repo).__name__
+            print(f"[DEBUG Product.create] Repository type: {repo_type}")
+            
+            created_at = datetime.now()
+            
+            # Create product via repository
+            print(f"[DEBUG Product.create] Creating product: name={name}, user_id={user_id}")
+            product_id = repo.create_product(
+                user_id=user_id,
+                name=name,
+                price=price,
+                image=image,
+                brand=brand,
+                url=url,
+                created_at=created_at,
+                old_price=old_price,
+                current_price=current_price,
+                discount_percentage=discount_percentage,
+                images=images,
+                discount_info=discount_info
+            )
+            print(f"[DEBUG Product.create] Product created with ID: {product_id}")
+            
+            # Return Product object (fetch from repository to ensure consistency)
+            product_data = repo.get_product_by_id(product_id)
+            if not product_data:
+                raise Exception("Ürün oluşturuldu ama veritabanından okunamadı")
+            
+            # Handle images - repository returns as list for Firestore, but SQLite might be JSON string
+            images_data = product_data.get('images')
+            if isinstance(images_data, str):
+                import json
+                try:
+                    images_data = json.loads(images_data)
+                except:
+                    images_data = [product_data.get('image')] if product_data.get('image') else []
+            elif not images_data:
+                images_data = [product_data.get('image')] if product_data.get('image') else []
+            
+            # Handle timestamp conversion
+            created_at_data = product_data.get('created_at')
+            if hasattr(created_at_data, 'timestamp'):  # Firestore Timestamp
+                created_at_data = created_at_data
+            elif isinstance(created_at_data, str):
+                try:
+                    created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S.%f')
+                except ValueError:
+                    try:
+                        created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        created_at_data = datetime.now()
+            elif created_at_data is None:
+                created_at_data = datetime.now()
+            
+            return Product(
+                product_data.get('id'),
+                product_data.get('user_id'),
+                product_data.get('name'),
+                product_data.get('price'),
+                product_data.get('image'),
+                product_data.get('brand'),
+                product_data.get('url'),
+                created_at_data,
+                product_data.get('old_price'),
+                product_data.get('current_price'),
+                product_data.get('discount_percentage'),
+                images_data,
+                product_data.get('discount_info')
+            )
+        except Exception as e:
+            print(f"[HATA] Ürün oluşturma hatası: {e}")
+            raise Exception(f"Ürün oluşturulamadı: {str(e)}")
     
     @staticmethod
     def get_by_id(product_id):
-        """ID ile ürün getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM products WHERE id = ?', (product_id,))
-        product_data = cursor.fetchone()
-        conn.close()
+        """ID ile ürün getir (Repository pattern)"""
+        from app.repositories import get_repository
+        from datetime import datetime
+        import json
         
-        if product_data:
-            return Product(*product_data)
-        return None
+        repo = get_repository()
+        product_data = repo.get_product_by_id(product_id)
+        
+        if not product_data:
+            return None
+        
+        # Handle images
+        images_data = product_data.get('images')
+        if isinstance(images_data, str):
+            try:
+                images_data = json.loads(images_data)
+            except:
+                images_data = [product_data.get('image')] if product_data.get('image') else []
+        elif not images_data:
+            images_data = [product_data.get('image')] if product_data.get('image') else []
+        
+        # Handle timestamp
+        created_at = product_data.get('created_at')
+        if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+            created_at = created_at
+        elif isinstance(created_at, str):
+            try:
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                except:
+                    created_at = datetime.now()
+        elif created_at is None:
+            created_at = datetime.now()
+        
+        return Product(
+            product_data.get('id'),
+            product_data.get('user_id'),
+            product_data.get('name'),
+            product_data.get('price'),
+            product_data.get('image'),
+            product_data.get('brand'),
+            product_data.get('url'),
+            created_at,
+            product_data.get('old_price'),
+            product_data.get('current_price'),
+            product_data.get('discount_percentage'),
+            images_data,
+            product_data.get('discount_info')
+        )
     
     @staticmethod
     def update(product_id, user_id, **kwargs):
-        """Ürün güncelle"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Güncellenecek alanları hazırla
-        updates = []
-        values = []
-        
-        allowed_fields = ['name', 'price', 'image', 'brand', 'url', 'old_price', 'current_price', 'discount_percentage', 'images', 'discount_info']
+        """Ürün güncelle (Repository pattern ile)"""
+        from app.repositories import get_repository
+
+        allowed_fields = [
+            'name',
+            'price',
+            'image',
+            'brand',
+            'url',
+            'old_price',
+            'current_price',
+            'discount_percentage',
+            'images',
+            'discount_info',
+        ]
+
+        update_data = {}
+
         for field, value in kwargs.items():
             if field in allowed_fields and value is not None:
-                # images field'ı için JSON string'e çevir
+                # images list ise list olarak repo'ya gönder; JSON'a çevirme işini repo halletsin
                 if field == 'images' and isinstance(value, list):
-                    import json
-                    value = json.dumps(value)
-                updates.append(f"{field} = ?")
-                values.append(value)
-        
-        if not updates:
-            conn.close()
+                    update_data['images'] = value
+                else:
+                    update_data[field] = value
+
+        # Güncellenecek bir şey yoksa
+        if not update_data:
             return None
-        
-        values.append(product_id)
-        values.append(user_id)
-        
-        query = f"UPDATE products SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
-        cursor.execute(query, values)
-        
-        conn.commit()
-        conn.close()
-        
+
+        repo = get_repository()
+        success = repo.update_product(product_id, user_id, **update_data)
+
+        if not success:
+            return None
+
+        # Güncel ürünü tekrar çekip döndür
         return Product.get_by_id(product_id)
     
     @staticmethod
     def delete(product_id, user_id):
-        """Ürün sil - Transaction safe"""
-        conn = get_db_connection()
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        """Ürün sil - Repository pattern"""
         try:
-            # Önce ürünün kullanıcıya ait olduğunu kontrol et
-            cursor.execute('SELECT id FROM products WHERE id = ? AND user_id = ?', (product_id, user_id))
-            if not cursor.fetchone():
-                return False  # Ürün bulunamadı veya kullanıcıya ait değil
+            from app.repositories import get_repository
             
-            # Koleksiyonlardan da çıkar
-            cursor.execute('DELETE FROM collection_products WHERE product_id = ?', (product_id,))
+            repo = get_repository()
             
-            # Fiyat takibini sil
-            cursor.execute('DELETE FROM price_tracking WHERE product_id = ?', (product_id,))
+            # Delete product via repository (repository handles all related deletions)
+            success = repo.delete_product(product_id, user_id)
             
-            # Fiyat geçmişini sil
-            cursor.execute('DELETE FROM price_history WHERE product_id = ?', (product_id,))
-
-            # Favorilerden sil
-            cursor.execute('DELETE FROM favorites WHERE product_id = ?', (product_id,))
+            if not success:
+                print(f"[HATA] Ürün silinemedi: {product_id} (kullanıcı: {user_id})")
+                return False
             
-            # Ürünü sil
-            cursor.execute('DELETE FROM products WHERE id = ? AND user_id = ?', (product_id, user_id))
-            
-            conn.commit()
             return True
         except Exception as e:
-            conn.rollback()
             print(f"[HATA] Ürün silme hatası: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        finally:
-            conn.close()
 
 class Collection:
-    def __init__(self, id, user_id, name, description, type, is_public, share_url, created_at):
+    def __init__(self, id, user_id, name, description, type, is_public, share_url, created_at, cover_image=None):
         self.id = id
         self.user_id = user_id
         self.name = name
@@ -569,6 +969,7 @@ class Collection:
         self.type = type
         self.is_public = is_public
         self.share_url = share_url
+        self.cover_image = cover_image
         if isinstance(created_at, str):
             try:
                 self.created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
@@ -581,143 +982,277 @@ class Collection:
             self.created_at = created_at
     
     @staticmethod
-    def create(user_id, name, description, type, is_public=True):
-        """Yeni koleksiyon oluştur"""
-        collection_id = str(uuid.uuid4())
-        share_url = f"collection_{collection_id[:8]}"
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO collections (id, user_id, name, description, type, is_public, share_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (collection_id, user_id, name, description, type, is_public, share_url, datetime.now()))
-        
-        conn.commit()
-        conn.close()
-        
-        return Collection(collection_id, user_id, name, description, type, is_public, share_url, datetime.now())
+    def create(user_id, name, description, type, is_public=True, cover_image=None):
+        """Yeni koleksiyon oluştur (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            collection_id = str(uuid.uuid4())
+            share_url = f"collection_{collection_id[:8]}"
+            created_at = datetime.now()
+            
+            print(f"[DEBUG Collection.create] Creating collection: name={name}, user_id={user_id}")
+            
+            # Create collection via repository
+            created_id = repo.create_collection(
+                user_id=user_id,
+                name=name,
+                description=description,
+                collection_type=type,
+                is_public=is_public,
+                share_url=share_url,
+                created_at=created_at,
+                cover_image=cover_image
+            )
+            
+            print(f"[DEBUG Collection.create] Collection created: {created_id}")
+            
+            return Collection(created_id, user_id, name, description, type, is_public, share_url, created_at, cover_image)
+        except Exception as e:
+            print(f"[ERROR] Create collection error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     @staticmethod
     def get_by_id(collection_id):
-        """ID ile koleksiyon getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM collections WHERE id = ?', (collection_id,))
-        collection_data = cursor.fetchone()
-        conn.close()
-        
-        if collection_data:
-            return Collection(*collection_data)
-        return None
+        """ID ile koleksiyon getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            collection_data = repo.get_collection_by_id(collection_id)
+            
+            if collection_data:
+                # Handle timestamp conversion
+                created_at = collection_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                return Collection(
+                    collection_data.get('id'),
+                    collection_data.get('user_id'),
+                    collection_data.get('name'),
+                    collection_data.get('description'),
+                    collection_data.get('type'),
+                    collection_data.get('is_public', True),
+                    collection_data.get('share_url'),
+                    created_at,
+                    collection_data.get('cover_image')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get collection by id error: {e}")
+            return None
     
     @staticmethod
     def get_by_share_url(share_url):
-        """Share URL ile koleksiyon getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM collections WHERE share_url = ?', (share_url,))
-        collection_data = cursor.fetchone()
-        conn.close()
-        
-        if collection_data:
-            return Collection(*collection_data)
-        return None
+        """Share URL ile koleksiyon getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            collection_data = repo.get_collection_by_share_url(share_url)
+            
+            if collection_data:
+                # Handle timestamp conversion
+                created_at = collection_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                return Collection(
+                    collection_data.get('id'),
+                    collection_data.get('user_id'),
+                    collection_data.get('name'),
+                    collection_data.get('description'),
+                    collection_data.get('type'),
+                    collection_data.get('is_public', True),
+                    collection_data.get('share_url'),
+                    created_at
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get collection by share url error: {e}")
+            return None
     
     @staticmethod
     def get_user_collections(user_id):
-        """Kullanıcının koleksiyonlarını getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM collections WHERE user_id = ? ORDER BY created_at DESC', (user_id,))
-        collections = cursor.fetchall()
-        conn.close()
-        
-        return [Collection(*collection) for collection in collections]
+        """Kullanıcının koleksiyonlarını getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            collections_data = repo.get_collections_by_user_id(user_id)
+            
+            collections = []
+            for col_data in collections_data:
+                # Handle timestamp conversion
+                created_at = col_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                collections.append(Collection(
+                    col_data.get('id'),
+                    col_data.get('user_id'),
+                    col_data.get('name'),
+                    col_data.get('description'),
+                    col_data.get('type'),
+                    col_data.get('is_public', True),
+                    col_data.get('share_url'),
+                    created_at,
+                    col_data.get('cover_image')
+                ))
+            
+            return collections
+        except Exception as e:
+            print(f"[ERROR] Get user collections error: {e}")
+            return []
     
 
     
     def get_products(self):
-        """Koleksiyondaki ürünleri getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT p.* FROM products p
-            JOIN collection_products cp ON p.id = cp.product_id
-            WHERE cp.collection_id = ?
-            ORDER BY cp.added_at DESC
-        ''', (self.id,))
-        products = cursor.fetchall()
-        conn.close()
-        
-        return [Product(*product) for product in products]
+        """Koleksiyondaki ürünleri getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            from app.models.product import Product
+            
+            repo = get_repository()
+            products_data = repo.get_products_by_collection_id(self.id)
+            
+            products = []
+            for p_data in products_data:
+                # Handle images
+                images_data = p_data.get('images')
+                if isinstance(images_data, str):
+                    import json
+                    try:
+                        images_data = json.loads(images_data)
+                    except:
+                        images_data = [p_data.get('image')] if p_data.get('image') else []
+                elif not images_data:
+                    images_data = [p_data.get('image')] if p_data.get('image') else []
+                
+                # Handle timestamp
+                created_at_data = p_data.get('created_at')
+                if hasattr(created_at_data, 'timestamp'):
+                    created_at_data = created_at_data
+                elif isinstance(created_at_data, str):
+                    try:
+                        created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at_data = datetime.now()
+                elif created_at_data is None:
+                    created_at_data = datetime.now()
+                
+                products.append(Product(
+                    p_data.get('id'),
+                    p_data.get('user_id'),
+                    p_data.get('name'),
+                    p_data.get('price'),
+                    p_data.get('image'),
+                    p_data.get('brand'),
+                    p_data.get('url'),
+                    created_at_data,
+                    p_data.get('old_price'),
+                    p_data.get('current_price'),
+                    p_data.get('discount_percentage'),
+                    images_data,
+                    p_data.get('discount_info')
+                ))
+            
+            return products
+        except Exception as e:
+            print(f"[ERROR] Get collection products error: {e}")
+            return []
     
     def add_product(self, product_id):
-        """Koleksiyona ürün ekle - Race condition safe"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
+        """Koleksiyona ürün ekle (Repository pattern)"""
         try:
-            # Ürünün zaten koleksiyonda olup olmadığını kontrol et
-            cursor.execute('SELECT id FROM collection_products WHERE collection_id = ? AND product_id = ?', (self.id, product_id))
-            if cursor.fetchone():
-                return False
+            from app.repositories import get_repository
+            
+            repo = get_repository()
             
             # Ürünün kullanıcıya ait olduğunu kontrol et (güvenlik)
-            cursor.execute('SELECT id FROM products WHERE id = ? AND user_id = ?', (product_id, self.user_id))
-            if not cursor.fetchone():
-                return False  # Ürün kullanıcıya ait değil
+            product = repo.get_product_by_id(product_id)
+            if not product or product.get('user_id') != self.user_id:
+                print(f"[WARNING] Product {product_id} not found or not owned by user {self.user_id}")
+                return False
             
-            cp_id = str(uuid.uuid4())
-            cursor.execute('''
-                INSERT INTO collection_products (id, collection_id, product_id)
-                VALUES (?, ?, ?)
-            ''', (cp_id, self.id, product_id))
-            
-            conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            # Duplicate entry (race condition durumunda)
-            conn.rollback()
-            return False
+            print(f"[DEBUG Collection.add_product] Adding product {product_id} to collection {self.id}")
+            result = repo.add_product_to_collection(self.id, product_id)
+            print(f"[DEBUG Collection.add_product] Result: {result}")
+            return result
         except Exception as e:
-            conn.rollback()
             print(f"[HATA] Koleksiyona ürün ekleme hatası: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        finally:
-            conn.close()
     
     def remove_product(self, product_id):
-        """Koleksiyondan ürün çıkar"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        """Koleksiyondan ürün çıkar (Repository pattern)"""
         try:
-            cursor.execute('DELETE FROM collection_products WHERE collection_id = ? AND product_id = ?', (self.id, product_id))
-            conn.commit()
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG Collection.remove_product] Removing product {product_id} from collection {self.id}")
+            result = repo.remove_product_from_collection(self.id, product_id)
+            print(f"[DEBUG Collection.remove_product] Result: {result}")
+            return result
         except Exception as e:
-            conn.rollback()
             print(f"[HATA] Koleksiyondan ürün çıkarma hatası: {e}")
-            raise
-        finally:
-            conn.close()
+            import traceback
+            traceback.print_exc()
+            return False
     
     def delete(self):
-        """Koleksiyonu sil - Transaction safe"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        """Koleksiyonu sil (Repository pattern)"""
         try:
-            # Önce koleksiyon ürünlerini sil
-            cursor.execute('DELETE FROM collection_products WHERE collection_id = ?', (self.id,))
-            # Sonra koleksiyonu sil
-            cursor.execute('DELETE FROM collections WHERE id = ?', (self.id,))
-            conn.commit()
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG Collection.delete] Deleting collection {self.id}")
+            result = repo.delete_collection(self.id, self.user_id)
+            print(f"[DEBUG Collection.delete] Result: {result}")
+            return result
         except Exception as e:
-            conn.rollback()
             print(f"[HATA] Koleksiyon silme hatası: {e}")
-            raise
-        finally:
-            conn.close()
+            import traceback
+            traceback.print_exc()
+            return False
 
 
 class PriceTracking:
@@ -735,39 +1270,71 @@ class PriceTracking:
     
     @staticmethod
     def create(user_id, product_id, current_price, original_price=None, alert_price=None):
-        """Fiyat takibi oluştur"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        tracking_id = str(uuid.uuid4())
-        original_price = original_price or current_price
-        
-        cursor.execute('''
-            INSERT INTO price_tracking (id, user_id, product_id, current_price, original_price, alert_price)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (tracking_id, user_id, product_id, current_price, original_price, alert_price))
-        
-        # Fiyat geçmişine ekle
-        history_id = str(uuid.uuid4())
-        cursor.execute('''
-            INSERT INTO price_history (id, product_id, price)
-            VALUES (?, ?, ?)
-        ''', (history_id, product_id, current_price))
-        
-        conn.commit()
-        conn.close()
-        
-        return tracking_id
+        """Fiyat takibi oluştur (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            from app.config import Config
+            
+            # Debug: Check which backend is being used
+            db_backend = Config.DB_BACKEND
+            print(f"[DEBUG PriceTracking.create] DB_BACKEND: {db_backend}")
+            
+            repo = get_repository()
+            repo_type = type(repo).__name__
+            print(f"[DEBUG PriceTracking.create] Repository type: {repo_type}")
+            
+            original_price = original_price or current_price
+            
+            print(f"[DEBUG PriceTracking.create] Creating tracking: user_id={user_id}, product_id={product_id}, price={current_price}")
+            
+            # Create price tracking via repository
+            tracking_id = repo.create_price_tracking(
+                user_id=user_id,
+                product_id=product_id,
+                current_price=current_price,
+                original_price=original_price,
+                alert_price=alert_price
+            )
+            
+            # Add to price history
+            from datetime import datetime
+            repo.add_price_history(product_id, current_price, datetime.now())
+            
+            print(f"[DEBUG PriceTracking.create] Tracking created: {tracking_id}")
+            return tracking_id
+        except Exception as e:
+            print(f"[ERROR] Create price tracking error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     @staticmethod
     def get_by_id(tracking_id):
-        """ID ile takip getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM price_tracking WHERE id = ?', (tracking_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return row
+        """ID ile takip getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            tracking_data = repo.get_price_tracking_by_id(tracking_id)
+            
+            if tracking_data:
+                # Convert dict to tuple format for backward compatibility
+                return (
+                    tracking_data.get('id'),
+                    tracking_data.get('product_id'),
+                    tracking_data.get('user_id'),
+                    tracking_data.get('current_price'),
+                    tracking_data.get('price_change', '0'),
+                    tracking_data.get('original_price'),
+                    tracking_data.get('is_active', True),
+                    tracking_data.get('alert_price'),
+                    tracking_data.get('created_at'),
+                    tracking_data.get('last_checked')
+                )
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get price tracking by id error: {e}")
+            return None
 
     @staticmethod
     def delete(tracking_id):
@@ -776,55 +1343,139 @@ class PriceTracking:
 
     @staticmethod
     def get_by_product_and_user(product_id, user_id):
-        """Belirli bir ürün için kullanıcının takip kaydını getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, product_id, user_id, current_price, price_change, 
-                   original_price, is_active, alert_price, created_at, last_checked
-            FROM price_tracking 
-            WHERE product_id = ? AND user_id = ? AND is_active = 1
-        ''', (product_id, user_id))
-        tracking_data = cursor.fetchone()
-        conn.close()
-        
-        return tracking_data
+        """Belirli bir ürün için kullanıcının takip kaydını getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            from app.config import Config
+            
+            # Debug: Check which backend is being used
+            db_backend = Config.DB_BACKEND
+            print(f"[DEBUG PriceTracking.get_by_product_and_user] DB_BACKEND: {db_backend}")
+            
+            repo = get_repository()
+            repo_type = type(repo).__name__
+            print(f"[DEBUG PriceTracking.get_by_product_and_user] Repository type: {repo_type}")
+            print(f"[DEBUG PriceTracking.get_by_product_and_user] Checking: product_id={product_id}, user_id={user_id}")
+            
+            tracking_data = repo.get_price_tracking_by_product_and_user(product_id, user_id)
+            
+            if tracking_data:
+                print(f"[DEBUG PriceTracking.get_by_product_and_user] Found existing tracking: {tracking_data.get('id')}")
+                # Convert dict to tuple format for backward compatibility
+                return (
+                    tracking_data.get('id'),
+                    tracking_data.get('product_id'),
+                    tracking_data.get('user_id'),
+                    tracking_data.get('current_price'),
+                    tracking_data.get('price_change', '0'),
+                    tracking_data.get('original_price'),
+                    tracking_data.get('is_active', True),
+                    tracking_data.get('alert_price'),
+                    tracking_data.get('created_at'),
+                    tracking_data.get('last_checked')
+                )
+            else:
+                print(f"[DEBUG PriceTracking.get_by_product_and_user] No existing tracking found")
+            return None
+        except Exception as e:
+            print(f"[ERROR] Get price tracking by product and user error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     @staticmethod
     def remove_tracking(tracking_id):
-        """Fiyat takibini kaldır (pasif hale getir)"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE price_tracking 
-            SET is_active = 0 
-            WHERE id = ?
-        ''', (tracking_id,))
-        
-        conn.commit()
-        conn.close()
-        
-        return True
+        """Fiyat takibini kaldır (pasif hale getir) - Repository pattern"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG PriceTracking.remove_tracking] Removing tracking: {tracking_id}")
+            
+            # Get tracking to find user_id
+            tracking_data = repo.get_price_tracking_by_id(tracking_id)
+            if not tracking_data:
+                print(f"[WARNING] Tracking not found: {tracking_id}")
+                return False
+            
+            # Deactivate tracking
+            result = repo.update_price_tracking(tracking_id, is_active=False)
+            print(f"[DEBUG PriceTracking.remove_tracking] Result: {result}")
+            return result
+        except Exception as e:
+            print(f"[ERROR] Remove tracking error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     @staticmethod
     def get_user_tracking(user_id):
-        """Kullanıcının fiyat takiplerini getir"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT pt.id, pt.product_id, pt.user_id, pt.current_price, pt.price_change, 
-                   pt.original_price, pt.is_active, pt.alert_price, pt.created_at, pt.last_checked,
-                   p.name, p.brand, p.image 
-            FROM price_tracking pt
-            JOIN products p ON pt.product_id = p.id
-            WHERE pt.user_id = ? AND pt.is_active = 1
-            ORDER BY pt.created_at DESC
-        ''', (user_id,))
-        tracking_data = cursor.fetchall()
-        conn.close()
-        
-        return tracking_data
+        """Kullanıcının fiyat takiplerini getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG PriceTracking.get_user_tracking] Getting trackings for user: {user_id}")
+            
+            trackings_data = repo.get_price_trackings_by_user_id(user_id)
+            print(f"[DEBUG PriceTracking.get_user_tracking] Found {len(trackings_data)} trackings")
+            
+            # Convert to tuple format for backward compatibility with template
+            trackings = []
+            for data in trackings_data:
+                # Handle timestamp conversion
+                created_at = data.get('created_at')
+                if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                last_checked = data.get('last_checked', created_at)
+                if hasattr(last_checked, 'timestamp'):  # Firestore Timestamp
+                    last_checked = last_checked
+                elif isinstance(last_checked, str):
+                    try:
+                        last_checked = datetime.strptime(last_checked, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_checked = datetime.strptime(last_checked, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_checked = created_at
+                elif last_checked is None:
+                    last_checked = created_at
+                
+                # Return tuple format: (id, product_id, user_id, current_price, price_change, original_price, is_active, alert_price, created_at, last_checked, name, brand, image)
+                trackings.append((
+                    data.get('id'),
+                    data.get('product_id'),
+                    data.get('user_id'),
+                    data.get('current_price'),
+                    data.get('price_change', '0'),
+                    data.get('original_price'),
+                    data.get('is_active', True),
+                    data.get('alert_price'),
+                    created_at,
+                    last_checked,
+                    data.get('product_name'),
+                    data.get('product_brand'),
+                    data.get('product_image')
+                ))
+            
+            print(f"[DEBUG PriceTracking.get_user_tracking] Returning {len(trackings)} trackings")
+            return trackings
+        except Exception as e:
+            print(f"[ERROR] Get user tracking error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     @staticmethod
     def update_price(tracking_id, new_price):
@@ -884,71 +1535,108 @@ class Notification:
 
     @staticmethod
     def create(user_id, product_id=None, type='PRICE_DROP', message='', payload=None):
-        """Yeni bildirim oluştur"""
-        notif_id = str(uuid.uuid4())
-
-        payload_str = None
-        if payload is not None:
-            if isinstance(payload, str):
-                payload_str = payload
-            else:
-                try:
-                    payload_str = json.dumps(payload, ensure_ascii=False)
-                except Exception:
-                    payload_str = str(payload)
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            INSERT INTO notifications (id, user_id, product_id, type, message, payload, created_at, read_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''',
-            (notif_id, user_id, product_id, type, message, payload_str, datetime.now(), None)
-        )
-        conn.commit()
-        conn.close()
-
-        return notif_id
+        """Yeni bildirim oluştur (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            
+            # Handle payload
+            payload_str = None
+            if payload is not None:
+                if isinstance(payload, str):
+                    payload_str = payload
+                else:
+                    try:
+                        payload_str = json.dumps(payload, ensure_ascii=False)
+                    except Exception:
+                        payload_str = str(payload)
+            
+            print(f"[DEBUG Notification.create] Creating notification: user_id={user_id}, type={type}")
+            notif_id = repo.create_notification(
+                user_id=user_id,
+                product_id=product_id,
+                notification_type=type,
+                message=message,
+                payload=payload_str,
+                created_at=datetime.now()
+            )
+            print(f"[DEBUG Notification.create] Notification created: {notif_id}")
+            return notif_id
+        except Exception as e:
+            print(f"[ERROR] Create notification error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     @staticmethod
     def get_for_user(user_id, limit=50):
-        """Kullanıcının bildirimlerini getir (yeniden eskiye doğru)"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT id, user_id, product_id, type, message, payload, created_at, read_at
-            FROM notifications
-            WHERE user_id = ?
-            ORDER BY datetime(created_at) DESC
-            LIMIT ?
-            ''',
-            (user_id, limit)
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [Notification(*row) for row in rows]
+        """Kullanıcının bildirimlerini getir (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            notifications_data = repo.get_notifications_by_user_id(user_id, limit)
+            
+            notifications = []
+            for notif_data in notifications_data:
+                # Handle timestamp conversion
+                created_at = notif_data.get('created_at')
+                if hasattr(created_at, 'timestamp'):
+                    created_at = created_at
+                elif isinstance(created_at, str):
+                    try:
+                        created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at = datetime.now()
+                elif created_at is None:
+                    created_at = datetime.now()
+                
+                read_at = notif_data.get('read_at')
+                if read_at and hasattr(read_at, 'timestamp'):
+                    read_at = read_at
+                elif isinstance(read_at, str):
+                    try:
+                        read_at = datetime.strptime(read_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            read_at = datetime.strptime(read_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            read_at = None
+                
+                notifications.append(Notification(
+                    notif_data.get('id'),
+                    notif_data.get('user_id'),
+                    notif_data.get('product_id'),
+                    notif_data.get('type'),
+                    notif_data.get('message'),
+                    notif_data.get('payload'),
+                    created_at,
+                    read_at
+                ))
+            
+            return notifications
+        except Exception as e:
+            print(f"[ERROR] Get notifications for user error: {e}")
+            return []
 
     @staticmethod
     def mark_all_read(user_id):
-        """Kullanıcının tüm okunmamış bildirimlerini okundu işaretle"""
-        conn = get_db_connection()
-        conn = get_db_connection()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        now = datetime.now()
-        cursor.execute(
-            '''
-            UPDATE notifications
-            SET read_at = ?
-            WHERE user_id = ? AND read_at IS NULL
-            ''',
-            (now, user_id)
-        )
-        conn.commit()
-        conn.close()
+        """Kullanıcının tüm okunmamış bildirimlerini okundu işaretle (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG Notification.mark_all_read] Marking all notifications as read for user: {user_id}")
+            result = repo.mark_notifications_read(user_id)
+            print(f"[DEBUG Notification.mark_all_read] Result: {result}")
+            return result
+        except Exception as e:
+            print(f"[ERROR] Mark notifications read error: {e}")
+            return False
 
 class Favorite:
     def __init__(self, id, user_id, product_id, created_at):
@@ -959,69 +1647,106 @@ class Favorite:
 
     @staticmethod
     def create(user_id, product_id):
-        """Favori ekle"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
+        """Favori ekle (Repository pattern)"""
         try:
-            # Zaten var mı kontrol et
-            cursor.execute('SELECT id FROM favorites WHERE user_id = ? AND product_id = ?', (user_id, product_id))
-            if cursor.fetchone():
-                return False # Zaten favorilerde
+            from app.repositories import get_repository
             
-            fav_id = str(uuid.uuid4())
-            cursor.execute('INSERT INTO favorites (id, user_id, product_id, created_at) VALUES (?, ?, ?, ?)',
-                          (fav_id, user_id, product_id, datetime.now()))
-            conn.commit()
-            return True
+            repo = get_repository()
+            print(f"[DEBUG Favorite.create] Adding favorite: user_id={user_id}, product_id={product_id}")
+            result = repo.add_favorite(user_id, product_id)
+            print(f"[DEBUG Favorite.create] Result: {result}")
+            return result
         except Exception as e:
             print(f"[ERROR] Create favorite error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        finally:
-            conn.close()
 
     @staticmethod
     def delete(user_id, product_id):
-        """Favoriden çıkar"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
+        """Favoriden çıkar (Repository pattern)"""
         try:
-            cursor.execute('DELETE FROM favorites WHERE user_id = ? AND product_id = ?', (user_id, product_id))
-            conn.commit()
-            return True
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            print(f"[DEBUG Favorite.delete] Removing favorite: user_id={user_id}, product_id={product_id}")
+            result = repo.remove_favorite(user_id, product_id)
+            print(f"[DEBUG Favorite.delete] Result: {result}")
+            return result
         except Exception as e:
             print(f"[ERROR] Delete favorite error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
-        finally:
-            conn.close()
 
     @staticmethod
     def get_user_favorites(user_id):
-        """Kullanıcının favorilerini getir (Product objeleri olarak)"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT p.* FROM products p
-            JOIN favorites f ON p.id = f.product_id
-            WHERE f.user_id = ?
-            ORDER BY f.created_at DESC
-        ''', (user_id,))
-        
-        products = cursor.fetchall()
-        conn.close()
-        
-        return [Product(*product) for product in products]
+        """Kullanıcının favorilerini getir (Product objeleri olarak) - Repository pattern"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            products_data = repo.get_favorites_by_user_id(user_id)
+            
+            products = []
+            for p_data in products_data:
+                # Handle images - repository returns as list for Firestore, but SQLite might be JSON string
+                images_data = p_data.get('images')
+                if isinstance(images_data, str):
+                    import json
+                    try:
+                        images_data = json.loads(images_data)
+                    except:
+                        images_data = [p_data.get('image')] if p_data.get('image') else []
+                elif not images_data:
+                    images_data = [p_data.get('image')] if p_data.get('image') else []
+                
+                # Handle timestamp conversion
+                created_at_data = p_data.get('created_at')
+                if hasattr(created_at_data, 'timestamp'):  # Firestore Timestamp
+                    created_at_data = created_at_data
+                elif isinstance(created_at_data, str):
+                    try:
+                        created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            created_at_data = datetime.strptime(created_at_data, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            created_at_data = datetime.now()
+                elif created_at_data is None:
+                    created_at_data = datetime.now()
+                
+                products.append(Product(
+                    p_data.get('id'),
+                    p_data.get('user_id'),
+                    p_data.get('name'),
+                    p_data.get('price'),
+                    p_data.get('image'),
+                    p_data.get('brand'),
+                    p_data.get('url'),
+                    created_at_data,
+                    p_data.get('old_price'),
+                    p_data.get('current_price'),
+                    p_data.get('discount_percentage'),
+                    images_data,
+                    p_data.get('discount_info')
+                ))
+            
+            return products
+        except Exception as e:
+            print(f"[ERROR] Get user favorites error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     @staticmethod
     def check_favorite(user_id, product_id):
-        """Favori kontrolü"""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT 1 FROM favorites WHERE user_id = ? AND product_id = ?', (user_id, product_id))
-        exists = cursor.fetchone() is not None
-        
-        conn.close()
-        return exists
+        """Favori kontrolü (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            return repo.is_favorite(user_id, product_id)
+        except Exception as e:
+            print(f"[ERROR] Check favorite error: {e}")
+            return False

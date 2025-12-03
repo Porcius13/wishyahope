@@ -132,10 +132,12 @@ def upload_avatar():
         return redirect(url_for('profile.index'))
 
     # Kayıt yolu: static/avatars/<user_id>.<ext>
-    app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # kataloggia-main/kataloggia-main
-    project_root = os.path.dirname(app_root)  # üst dizin, static burada
-    avatars_dir = os.path.join(project_root, 'static', 'avatars')
+    # Flask'ın static_folder'ını kullan (app/__init__.py'de tanımlı)
+    static_folder = current_app.static_folder
+    avatars_dir = os.path.join(static_folder, 'avatars')
     os.makedirs(avatars_dir, exist_ok=True)
+    print(f"[DEBUG] Static folder: {static_folder}")
+    print(f"[DEBUG] Avatars directory: {avatars_dir}")
 
     avatar_filename = f"{current_user.id}.{ext}"
     avatar_path = os.path.join(avatars_dir, avatar_filename)
@@ -149,16 +151,32 @@ def upload_avatar():
             except OSError:
                 pass
 
-    file.save(avatar_path)
+    try:
+        file.save(avatar_path)
+        print(f"[DEBUG] Avatar dosyası kaydedildi: {avatar_path}")
+    except Exception as e:
+        print(f"[ERROR] Avatar dosyası kaydedilemedi: {e}")
+        flash('Dosya kaydedilemedi. Lütfen tekrar deneyin.', 'error')
+        return redirect(url_for('profile.index'))
 
     # DB'de avatar_url'i güncelle (static içindeki göreli yol)
     avatar_rel_url = f"avatars/{avatar_filename}"
     user = User.get_by_id(current_user.id)
     if user:
         user.avatar_url = avatar_rel_url
-        user.save()
+        try:
+            user.save()
+            print(f"[DEBUG] Avatar URL veritabanında güncellendi: {avatar_rel_url}")
+        except Exception as e:
+            print(f"[ERROR] Avatar URL veritabanında güncellenemedi: {e}")
+            flash('Profil fotoğrafı kaydedildi ancak veritabanında güncellenemedi.', 'error')
+            return redirect(url_for('profile.index'))
         # current_user objesini de güncelle
         current_user.avatar_url = avatar_rel_url
+    else:
+        print(f"[ERROR] Kullanıcı bulunamadı: {current_user.id}")
+        flash('Kullanıcı bilgisi bulunamadı.', 'error')
+        return redirect(url_for('profile.index'))
 
     flash('Profil fotoğrafınız güncellendi', 'success')
     return redirect(url_for('profile.index'))

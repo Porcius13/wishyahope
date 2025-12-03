@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tercihler - wıshya</title>
+    <title>Tercihler - miayis</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <!-- Stardos Stencil Font -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;600;700&family=Alkatra:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;600;700&family=Alkatra:wght@400;600&display=swap');
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/les-benjamins-theme.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/modern-ui.css') }}">
@@ -26,11 +27,13 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
-            line-height: 1.6;
+            line-height: 1.5;
             transition: background-color 0.3s, color 0.3s;
+            font-weight: 400;
+            letter-spacing: -0.01em;
         }
 
         .header {
@@ -57,13 +60,14 @@
         }
 
         .logo {
-            font-family: 'Stardos Stencil', 'Courier New', monospace !important;
+            font-family: 'Alkatra', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             font-size: 28px;
-            font-weight: bold;
+            font-weight: 600;
             text-decoration: none;
             color: var(--text-primary);
-            letter-spacing: 2px;
-            transition: all 0.3s ease;
+            letter-spacing: 0.03em;
+            transition: opacity 0.2s ease;
+            text-transform: none;
         }
 
         .nav-btn {
@@ -87,6 +91,34 @@
             border-color: var(--accent-color);
         }
 
+        .theme-toggle {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            padding: 0;
+            font-size: 16px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+        }
+
+        .theme-toggle:hover {
+            opacity: 0.6;
+        }
+
+        .theme-icon {
+            transition: transform 0.3s ease;
+            line-height: 1;
+        }
+
+        [data-theme="dark"] .theme-icon {
+            transform: rotate(180deg);
+        }
+
         .main-content {
             max-width: 800px;
             margin: 0 auto;
@@ -99,18 +131,20 @@
         }
 
         .page-title {
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 10px;
-            background: var(--gradient-primary);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            font-size: 24px;
+            font-weight: 400;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
         }
 
         .page-subtitle {
-            font-size: 16px;
+            font-size: 14px;
             color: var(--text-secondary);
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .preferences-card {
@@ -129,12 +163,14 @@
         }
 
         .section-title {
-            font-size: 20px;
-            font-weight: 700;
+            font-size: 14px;
+            font-weight: 400;
             color: var(--text-primary);
             margin-bottom: 20px;
             padding-bottom: 10px;
             border-bottom: 2px solid var(--glass-border);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
         }
 
         .preference-item {
@@ -154,8 +190,8 @@
         }
 
         .preference-label {
-            font-size: 16px;
-            font-weight: 600;
+            font-size: 14px;
+            font-weight: 400;
             color: var(--text-primary);
             margin-bottom: 5px;
         }
@@ -390,8 +426,11 @@
     <!-- Header -->
     <header class="header">
         <div class="header-content">
-            <a href="/" class="logo">wıshya</a>
-            <div style="display: flex; gap: 20px;">
+            <a href="/" class="logo">miayis</a>
+            <div style="display: flex; gap: 20px; align-items: center;">
+                <button id="theme-toggle" class="theme-toggle" title="Tema Değiştir">
+                    <span class="theme-icon">🌙</span>
+                </button>
                 <a href="/dashboard" class="nav-btn">Dashboard</a>
                 <a href="/profile" class="nav-btn">Profil</a>
                 <a href="/logout" class="nav-btn">Çıkış</a>
@@ -549,6 +588,45 @@
                 });
             }
         });
+
+        // Dark mode toggle button functionality
+        const themeToggle = document.getElementById('theme-toggle');
+        const themeIcon = document.querySelector('.theme-icon');
+
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        if (themeIcon) {
+            updateThemeIcon(savedTheme);
+        }
+
+        // Theme toggle
+        if (themeToggle) {
+            themeToggle.addEventListener('click', function () {
+                const currentTheme = document.documentElement.getAttribute('data-theme');
+                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                if (themeIcon) {
+                    updateThemeIcon(newTheme);
+                }
+                // Update select if exists
+                const themeSelect = document.getElementById('theme');
+                if (themeSelect) {
+                    themeSelect.value = newTheme;
+                }
+            });
+        }
+
+        function updateThemeIcon(theme) {
+            if (!themeIcon) return;
+            if (theme === 'dark') {
+                themeIcon.textContent = '☀️';
+            } else {
+                themeIcon.textContent = '🌙';
+            }
+        }
     </script>
 </body>
 </html> 

@@ -1,4 +1,4 @@
-# wıshya - Ürün Kataloğu
+# miayis - Ürün Kataloğu
 
 Modern ve kullanıcı dostu bir ürün kataloğu uygulaması. Kullanıcılar ürün URL'lerini ekleyebilir, koleksiyonlar oluşturabilir ve ürünlerini organize edebilir.
 

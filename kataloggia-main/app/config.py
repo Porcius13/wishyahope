@@ -12,6 +12,9 @@ class Config:
     # Core secret
     SECRET_KEY = os.environ.get('SECRET_KEY', 'favit-secret-key-2025')
 
+    # Database backend: 'sqlite' or 'firestore'
+    DB_BACKEND = os.environ.get('DB_BACKEND', 'sqlite')
+
     # Database path for raw sqlite3 usage (non-SQLAlchemy code)
     DATABASE_PATH = os.environ.get('DATABASE_PATH', 'favit.db')
 
@@ -21,6 +24,11 @@ class Config:
         f'sqlite:///{DATABASE_PATH}',
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Firebase Configuration
+    FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', 'miayis')
+    FIREBASE_CREDENTIALS_PATH = os.environ.get('FIREBASE_CREDENTIALS_PATH', None)
+    # If FIREBASE_CREDENTIALS_PATH is not set, Firebase Admin SDK will use Application Default Credentials
 
     # Redis / Celery (for future use)
     REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')

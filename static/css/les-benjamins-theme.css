@@ -53,7 +53,7 @@ button, a, input, select, textarea {
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background: var(--bg-primary);
     color: var(--text-primary);
     line-height: 1.5;
@@ -86,7 +86,7 @@ body {
 }
 
 .logo {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'EB Garamond', 'Times New Roman', serif;
     font-size: 18px;
     font-weight: 400;
     text-decoration: none;

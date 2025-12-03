@@ -73,8 +73,12 @@ def add_product():
         print(f"[DEBUG] Scraped data: {scraped_data}")
         
         if not scraped_data:
-            error_msg = 'Ürün bilgileri çekilemedi. Lütfen geçerli bir e-ticaret sitesi URL\'si girin.'
-            print(f"[ERROR] Scraping failed for URL: {product_url}")
+            # Buraya genelde fiyat veya GÖRSEL bulunamadığında düşüyoruz
+            error_msg = (
+                'Ürün bilgileri çekilemedi. Çoğu zaman ürün görseli veya fiyat bulunamadığında '
+                'bu hata oluşur. Lütfen geçerli bir ürün linki girin.'
+            )
+            print(f"[ERROR] Scraping failed for URL (missing image/price/title?): {product_url}")
             ProductImportIssue.create(
                 user_id=current_user.id,
                 url=product_url,
@@ -152,13 +156,26 @@ def add_product():
         print(f"[ERROR] Add product error: {e}")
         import traceback
         traceback.print_exc()
-        
+
+        # Beklenmeyen tüm hataları da problemli ürünler tablosuna yaz
+        try:
+            from models import ProductImportIssue
+            ProductImportIssue.create(
+                user_id=current_user.id if current_user and getattr(current_user, "id", None) else None,
+                url=product_url or '',
+                status='error',
+                reason=str(e)[:500],
+                raw_data=None
+            )
+        except Exception as log_err:
+            print(f"[ERROR] Failed to create import issue for unexpected error: {log_err}")
+
         if request.is_json:
             return jsonify({
                 'success': False,
                 'error': str(e)
             }), 500
-        
+
         flash(f'Ürün eklenirken hata oluştu: {str(e)}', 'error')
         return redirect(url_for('dashboard.index'))
 

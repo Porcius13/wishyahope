@@ -5,11 +5,19 @@ This is the **only** backend entrypoint; legacy monolithic app.py is deprecated.
 import os
 import sys
 
+from dotenv import load_dotenv
+
 # Ensure project root is on path (so we can import models.py etc.)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
+
+# Load environment variables from .env at project root
+project_root = parent_dir
+dotenv_path = os.path.join(project_root, '.env')
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
 
 from app import create_app, get_socketio
 from models import init_db

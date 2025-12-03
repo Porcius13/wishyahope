@@ -119,25 +119,15 @@ def get_price_history(tracking_id):
         product_id = tracking[1]
         current_price = tracking[3]
 
-        # Gerçek fiyat geçmişi verilerini getir
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        try:
-            # Eski verilerde product_id yerine tracking_id saklanmış olabileceği için ikisini de kontrol et
-            cursor.execute(
-                '''
-                SELECT price, recorded_at
-                FROM price_history
-                WHERE product_id = ? OR product_id = ?
-                ORDER BY datetime(recorded_at) ASC
-                LIMIT 60
-                ''',
-                (str(product_id), str(tracking_id))
-            )
-            rows = cursor.fetchall()
-        finally:
-            cursor.close()
-            conn.close()
+        # Gerçek fiyat geçmişi verilerini getir (Repository pattern)
+        from app.repositories import get_repository
+        repo = get_repository()
+        
+        # Get price history for product_id
+        history_data = repo.get_price_history_by_product_id(str(product_id), limit=60)
+        
+        # Convert to rows format for backward compatibility
+        rows = [(item.get('price'), item.get('recorded_at')) for item in history_data]
 
         def _parse_price(value):
             if value is None:

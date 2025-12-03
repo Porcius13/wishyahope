@@ -4,18 +4,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profil - wıshya</title>
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>">
+    <title>Profil - miayis</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <!-- Stardos Stencil Font -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;600;700&family=Alkatra:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;600;700&family=Alkatra:wght@400;600&display=swap');
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/modern-ui.css') }}">
     <style>
@@ -88,14 +87,14 @@
         }
 
         .logo {
-            font-family: 'Stardos Stencil', 'Courier New', monospace !important;
-            font-size: 24px;
-            font-weight: 700;
+            font-family: 'Alkatra', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+            font-size: 28px;
+            font-weight: 600;
             text-decoration: none;
             color: var(--text-primary);
-            letter-spacing: 0.15em;
+            letter-spacing: 0.03em;
             transition: all 0.3s ease;
-            text-transform: lowercase;
+            text-transform: none;
         }
 
         .header-actions {
@@ -273,8 +272,8 @@
         }
 
         .action-title {
-            font-size: 16px;
-            font-weight: 600;
+            font-size: 14px;
+            font-weight: 400;
             color: var(--text-primary);
             margin-bottom: 8px;
             text-transform: uppercase;
@@ -282,11 +281,12 @@
         }
 
         .action-description {
-            font-size: 13px;
+            font-size: 14px;
             color: var(--text-secondary);
-            line-height: 1.6;
+            line-height: 1.5;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            font-weight: 400;
         }
 
         @media (max-width: 768px) {
@@ -330,14 +330,11 @@
     <!-- Header -->
     <header class="header">
         <div class="header-content">
-            <a href="/" class="logo">wıshya</a>
+            <a href="/" class="logo">miayis</a>
             <div class="header-actions">
                 <nav class="nav-links">
                     <a href="/dashboard" class="nav-btn">ANASAYFA</a>
                     <a href="/collections" class="nav-btn">KOLEKSİYONLAR</a>
-                    <a href="/price-tracking" class="nav-btn">FİYAT TAKİBİ</a>
-                    <a href="/profile" class="nav-btn">PROFİL</a>
-                    <a href="/logout" class="nav-btn">ÇIKIŞ</a>
                 </nav>
                 <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">
                     <span class="theme-icon">🌙</span>
@@ -357,8 +354,8 @@
                 {% endif %}
             </div>
             <div class="profile-header-main">
-                <h1 class="profile-title">PROFİL</h1>
-                <p class="profile-subtitle">{{ user.username }} / {{ user.email }}</p>
+            <h1 class="profile-title">PROFİL</h1>
+            <p class="profile-subtitle">{{ user.username }} / {{ user.email }}</p>
                 <form class="avatar-upload-form" method="POST" action="/profile/avatar"
                     enctype="multipart/form-data">
                     <label for="avatar">Profil resmi:</label>
@@ -387,35 +384,60 @@
 
         <!-- Actions -->
         <div class="profile-actions">
+            <!-- Dropdown sırasına göre: Favorilerim -->
+            <a href="/profile/favorites" class="action-card">
+                <span class="action-icon">❤️</span>
+                <h3 class="action-title">FAVORİLERİM</h3>
+                <p class="action-description">Beğendiğin ürünleri tek yerde gör</p>
+            </a>
+
+            <!-- Koleksiyonlarım -->
+            <a href="/profile/collections" class="action-card">
+                <span class="action-icon">🗂️</span>
+                <h3 class="action-title">KOLEKSİYONLARIM</h3>
+                <p class="action-description">Oluşturduğun koleksiyonları yönet</p>
+            </a>
+
+            <!-- Ürünlerim (dashboard) -->
+            <a href="/dashboard" class="action-card">
+                <span class="action-icon">📦</span>
+                <h3 class="action-title">ÜRÜNLERİM</h3>
+                <p class="action-description">Tüm kayıtlı ürünlerini görüntüle</p>
+            </a>
+
+            <!-- Fiyat Takibi -->
+            <a href="/price-tracking" class="action-card">
+                <span class="action-icon">🏷️</span>
+                <h3 class="action-title">FİYAT TAKİBİ</h3>
+                <p class="action-description">Fiyat değişimlerini ve alarmları görüntüle</p>
+            </a>
+
+            <!-- Marka Yönetimi -->
+            <a href="/admin/brands" class="action-card">
+                <span class="action-icon">🏷️</span>
+                <h3 class="action-title">MARKA YÖNETİMİ</h3>
+                <p class="action-description">Marka listelerini ve kuralları yönet</p>
+            </a>
+
+            <!-- Hatalar (Problemli ürünler) -->
+            <a href="/profile/import-issues" class="action-card">
+                <span class="action-icon">⚠️</span>
+                <h3 class="action-title">HATALAR</h3>
+                <p class="action-description">Eklenemeyen veya eksik bilgiyle gelen linkleri incele</p>
+            </a>
+
+            <!-- Tercihlerim -->
+            <a href="/profile/preferences" class="action-card">
+                <span class="action-icon">🎨</span>
+                <h3 class="action-title">TERCİHLERİM</h3>
+                <p class="action-description">Bildirim ve görünüm tercihlerini özelleştir</p>
+            </a>
+
+            <!-- Hesap Ayarları -->
             <a href="/profile/settings" class="action-card">
                 <span class="action-icon">⚙️</span>
                 <h3 class="action-title">HESAP AYARLARI</h3>
                 <p class="action-description">Şifre değiştir ve hesap ayarlarını yönet</p>
-            </a>
-            <a href="/profile/preferences" class="action-card">
-                <span class="action-icon">🎨</span>
-                <h3 class="action-title">TERCİHLER</h3>
-                <p class="action-description">Bildirim ve görünüm tercihlerini özelleştir</p>
-            </a>
-            <a href="/dashboard" class="action-card">
-                <span class="action-icon">❤️</span>
-                <h3 class="action-title">ÜRÜNLERİM</h3>
-                <p class="action-description">Tüm kayıtlı ürünlerini görüntüle</p>
-            </a>
-            <a href="/collections" class="action-card">
-                <span class="action-icon">📁</span>
-                <h3 class="action-title">KOLEKSİYONLARIM</h3>
-                <p class="action-description">Oluşturduğun koleksiyonları yönet</p>
-            </a>
-            <a href="/price-tracking" class="action-card">
-                <span class="action-icon">📊</span>
-                <h3 class="action-title">FİYAT TAKİBİ</h3>
-                <p class="action-description">Fiyat değişimlerini ve alarmları görüntüle</p>
-            </a>
-            <a href="/profile/import-issues" class="action-card">
-                <span class="action-icon">⚠️</span>
-                <h3 class="action-title">PROBLEMLİ ÜRÜNLER</h3>
-                <p class="action-description">Eklenemeyen veya eksik bilgiyle gelen linkleri incele</p>
             </a>
         </div>
     </main>

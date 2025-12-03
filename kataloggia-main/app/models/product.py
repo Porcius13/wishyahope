@@ -29,19 +29,62 @@ def to_dict(self):
 # Method'u ekle
 BaseProduct.to_dict = to_dict
 
-# get_by_user_id method ekle
+# get_by_user_id method ekle - Repository pattern kullanıyor
 @classmethod
 def get_by_user_id(cls, user_id):
-    """Kullanıcı ID'sine göre ürünleri getir"""
-    import sqlite3
-    from app.utils.db_path import get_db_connection
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM products WHERE user_id = ? ORDER BY created_at DESC', (user_id,))
-    products = cursor.fetchall()
-    conn.close()
+    """Kullanıcı ID'sine göre ürünleri getir (Repository pattern)"""
+    from app.repositories import get_repository
+    from datetime import datetime
+    import json
     
-    return [cls(*product) for product in products]
+    repo = get_repository()
+    products_data = repo.get_products_by_user_id(user_id)
+    
+    products = []
+    for product_data in products_data:
+        # Handle images
+        images_data = product_data.get('images')
+        if isinstance(images_data, str):
+            try:
+                images_data = json.loads(images_data)
+            except:
+                images_data = [product_data.get('image')] if product_data.get('image') else []
+        elif not images_data:
+            images_data = [product_data.get('image')] if product_data.get('image') else []
+        
+        # Handle timestamp
+        created_at = product_data.get('created_at')
+        if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+            created_at = created_at
+        elif isinstance(created_at, str):
+            try:
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                except:
+                    created_at = datetime.now()
+        elif created_at is None:
+            created_at = datetime.now()
+        
+        product = cls(
+            product_data.get('id'),
+            product_data.get('user_id'),
+            product_data.get('name'),
+            product_data.get('price'),
+            product_data.get('image'),
+            product_data.get('brand'),
+            product_data.get('url'),
+            created_at,
+            product_data.get('old_price'),
+            product_data.get('current_price'),
+            product_data.get('discount_percentage'),
+            images_data,
+            product_data.get('discount_info')
+        )
+        products.append(product)
+    
+    return products
 
 BaseProduct.get_by_user_id = get_by_user_id
 
