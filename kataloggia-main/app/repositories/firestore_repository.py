@@ -26,16 +26,34 @@ class FirestoreRepository(BaseRepository):
         
         # Initialize Firebase Admin SDK if not already initialized
         if not firebase_admin._apps:
-            if Config.FIREBASE_CREDENTIALS_PATH:
+            import os
+            
+            # Check for JSON credentials in environment variable (for Render/cloud platforms)
+            firebase_creds_json = os.environ.get('FIREBASE_CREDENTIALS_JSON')
+            if firebase_creds_json:
+                try:
+                    # Parse JSON string from environment variable
+                    cred_dict = json.loads(firebase_creds_json)
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_admin.initialize_app(cred, {
+                        'projectId': Config.FIREBASE_PROJECT_ID
+                    })
+                    print("[INFO] Firebase initialized with credentials from FIREBASE_CREDENTIALS_JSON")
+                except json.JSONDecodeError as e:
+                    print(f"[ERROR] Failed to parse FIREBASE_CREDENTIALS_JSON: {e}")
+                    raise
+            elif Config.FIREBASE_CREDENTIALS_PATH:
                 cred = credentials.Certificate(Config.FIREBASE_CREDENTIALS_PATH)
                 firebase_admin.initialize_app(cred, {
                     'projectId': Config.FIREBASE_PROJECT_ID
                 })
+                print(f"[INFO] Firebase initialized with credentials from file: {Config.FIREBASE_CREDENTIALS_PATH}")
             else:
                 # Use Application Default Credentials
                 firebase_admin.initialize_app(options={
                     'projectId': Config.FIREBASE_PROJECT_ID
                 })
+                print("[INFO] Firebase initialized with Application Default Credentials")
         
         self.db = firestore.client()
     
