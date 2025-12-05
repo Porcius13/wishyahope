@@ -30,10 +30,19 @@ def create():
 
         # Yeni tasarımdaki form alanlarını oku
         # type: kombinler / favoriler ... (zorunlu)
-        # privacy: public / private
+        # privacy: public / private (eski form için)
+        # is_public: checkbox (yeni form için)
         collection_type = request.form.get('type') or 'custom'
-        privacy = request.form.get('privacy', 'public')
-        is_public = (privacy == 'public')
+        
+        # Önce is_public checkbox'ını kontrol et, yoksa privacy alanını kullan
+        is_public_checkbox = request.form.get('is_public')
+        if is_public_checkbox is not None:
+            # Checkbox varsa, işaretliyse 'on' değeri gelir
+            is_public = (is_public_checkbox == 'on')
+        else:
+            # Checkbox yoksa privacy alanını kontrol et
+            privacy = request.form.get('privacy', 'private')
+            is_public = (privacy == 'public')
         
         if not name:
             flash('Koleksiyon adı gerekli', 'error')
@@ -99,8 +108,33 @@ def edit(collection_id):
     if not collection or collection.user_id != current_user.id:
         flash('Koleksiyon bulunamadı', 'error')
         return redirect(url_for('profile.collections'))
+    
+    # Check if this is a copied collection (cannot be edited)
+    # Copied collections have "[KOPYALANMIŞ]" prefix in description
+    is_copied = False
+    if collection.description:
+        # Check if description contains the copied marker
+        if "[KOPYALANMIŞ]" in collection.description:
+            is_copied = True
+    
+    # Also check in repository data for additional safety
+    from app.repositories import get_repository
+    repo = get_repository()
+    collection_data = repo.get_collection_by_id(collection_id)
+    if collection_data:
+        desc = collection_data.get('description', '')
+        if desc and "[KOPYALANMIŞ]" in desc:
+            is_copied = True
+    
+    if is_copied:
+        flash('Bu koleksiyon başka bir kullanıcıdan kopyalanmıştır ve düzenlenemez', 'error')
+        return redirect(url_for('profile.collections'))
 
     if request.method == 'POST':
+        # Double check on POST request as well
+        if is_copied:
+            flash('Bu koleksiyon başka bir kullanıcıdan kopyalanmıştır ve düzenlenemez', 'error')
+            return redirect(url_for('profile.collections'))
         name = request.form.get('name', '').strip()
         description = request.form.get('description', '').strip()
         collection_type = request.form.get('type') or collection.type
@@ -112,7 +146,22 @@ def edit(collection_id):
             return redirect(url_for('collections_ui.edit', collection_id=collection_id))
 
         try:
+            # Final check: prevent editing copied collections
+            # Re-fetch collection to ensure we have latest data
+            current_collection = Collection.get_by_id(collection_id)
+            if current_collection and current_collection.description and "[KOPYALANMIŞ]" in current_collection.description:
+                flash('Bu koleksiyon başka bir kullanıcıdan kopyalanmıştır ve düzenlenemez', 'error')
+                return redirect(url_for('profile.collections'))
+            
             repo = get_repository()
+            # Also check repository data
+            collection_data = repo.get_collection_by_id(collection_id)
+            if collection_data:
+                desc = collection_data.get('description', '')
+                if desc and "[KOPYALANMIŞ]" in desc:
+                    flash('Bu koleksiyon başka bir kullanıcıdan kopyalanmıştır ve düzenlenemez', 'error')
+                    return redirect(url_for('profile.collections'))
+            
             success = repo.update_collection(
                 collection_id,
                 current_user.id,

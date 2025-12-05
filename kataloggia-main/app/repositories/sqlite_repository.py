@@ -69,6 +69,21 @@ class SQLiteRepository(BaseRepository):
             return dict(zip(columns, row)) if columns else None
         return None
     
+    def get_all_users(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all users with pagination"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?', (limit, offset))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        users = []
+        if rows and cursor.description:
+            columns = [desc[0] for desc in cursor.description]
+            for row in rows:
+                users.append(dict(zip(columns, row)))
+        return users
+    
     def create_user(self, username: str, email: str, password_hash: str, 
                    profile_url: str, created_at: datetime, 
                    last_read_notifications_at: Optional[datetime] = None,
@@ -324,12 +339,28 @@ class SQLiteRepository(BaseRepository):
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
+            # Check if collection is copied (cannot be edited)
+            cursor.execute('SELECT description FROM collections WHERE id = ?', (collection_id,))
+            result = cursor.fetchone()
+            if result and result[0] and "[KOPYALANMIŞ]" in result[0]:
+                print(f"[WARNING] Attempted to edit copied collection: {collection_id}")
+                conn.close()
+                return False
+            
             allowed_fields = ['name', 'description', 'type', 'is_public']
             updates = []
             values = []
 
             for field, value in kwargs.items():
                 if field in allowed_fields and value is not None:
+                    # Prevent removing [KOPYALANMIŞ] marker from description
+                    if field == 'description' and result and result[0] and "[KOPYALANMIŞ]" in result[0]:
+                        # Keep the marker even if user tries to remove it
+                        if "[KOPYALANMIŞ]" not in str(value):
+                            # Extract original marker and preserve it
+                            original_desc = result[0]
+                            marker_part = original_desc.split("] ", 1)[0] + "] "
+                            value = marker_part + str(value)
                     updates.append(f"{field} = ?")
                     values.append(value)
 
@@ -724,4 +755,156 @@ class SQLiteRepository(BaseRepository):
             'reason': row[5],
             'created_at': row[6]
         } for row in rows]
+    
+    # Follow operations
+    def follow_user(self, follower_id: str, following_id: str) -> bool:
+        """Follow a user"""
+        if follower_id == following_id:
+            return False  # Can't follow yourself
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if already following
+            cursor.execute('SELECT id FROM follows WHERE follower_id = ? AND following_id = ?', 
+                          (follower_id, following_id))
+            if cursor.fetchone():
+                conn.close()
+                return False  # Already following
+            
+            follow_id = str(uuid.uuid4())
+            cursor.execute('''
+                INSERT INTO follows (id, follower_id, following_id, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (follow_id, follower_id, following_id, datetime.now()))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Follow user error: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def unfollow_user(self, follower_id: str, following_id: str) -> bool:
+        """Unfollow a user"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('DELETE FROM follows WHERE follower_id = ? AND following_id = ?', 
+                          (follower_id, following_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Unfollow user error: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def is_following(self, follower_id: str, following_id: str) -> bool:
+        """Check if user is following another user"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM follows WHERE follower_id = ? AND following_id = ?', 
+                      (follower_id, following_id))
+        result = cursor.fetchone() is not None
+        conn.close()
+        return result
+    
+    def get_followers(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all followers of a user"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT f.id, f.follower_id, f.created_at, u.username, u.email
+            FROM follows f
+            JOIN users u ON f.follower_id = u.id
+            WHERE f.following_id = ?
+            ORDER BY f.created_at DESC
+        ''', (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        return [dict(zip(columns, row)) for row in rows] if columns else []
+    
+    def get_following(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all users that a user is following"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT f.id, f.following_id, f.created_at, u.username, u.email
+            FROM follows f
+            JOIN users u ON f.following_id = u.id
+            WHERE f.follower_id = ?
+            ORDER BY f.created_at DESC
+        ''', (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        return [dict(zip(columns, row)) for row in rows] if columns else []
+    
+    # Collection like operations
+    def like_collection(self, user_id: str, collection_id: str) -> bool:
+        """Like a collection"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if already liked
+            cursor.execute('SELECT id FROM likes WHERE user_id = ? AND collection_id = ?', 
+                          (user_id, collection_id))
+            if cursor.fetchone():
+                conn.close()
+                return False  # Already liked
+            
+            like_id = str(uuid.uuid4())
+            cursor.execute('''
+                INSERT INTO likes (id, user_id, collection_id, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (like_id, user_id, collection_id, datetime.now()))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Like collection error: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def unlike_collection(self, user_id: str, collection_id: str) -> bool:
+        """Unlike a collection"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('DELETE FROM likes WHERE user_id = ? AND collection_id = ?', 
+                          (user_id, collection_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Unlike collection error: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def is_collection_liked(self, user_id: str, collection_id: str) -> bool:
+        """Check if collection is liked by user"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM likes WHERE user_id = ? AND collection_id = ?', 
+                      (user_id, collection_id))
+        result = cursor.fetchone() is not None
+        conn.close()
+        return result
+    
+    def get_collection_likes_count(self, collection_id: str) -> int:
+        """Get total likes count for a collection"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM likes WHERE collection_id = ?', (collection_id,))
+        result = cursor.fetchone()[0]
+        conn.close()
+        return result
 

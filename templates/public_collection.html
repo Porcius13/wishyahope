@@ -213,6 +213,56 @@
             margin-bottom: 20px;
         }
 
+        .collection-actions {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .like-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 2px solid var(--glass-border);
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: var(--text-primary);
+            box-shadow: 0 4px 20px var(--shadow);
+        }
+
+        .like-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px var(--shadow);
+        }
+
+        .like-btn.liked {
+            background: rgba(255, 107, 107, 0.2);
+            border-color: #ff6b6b;
+            color: #ff6b6b;
+        }
+
+        .like-btn.liked:hover {
+            background: rgba(255, 107, 107, 0.3);
+        }
+
+        .like-icon {
+            font-size: 20px;
+        }
+
+        .likes-count {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
         .products-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -399,12 +449,16 @@
 </head>
 <body>
     <!-- Header -->
-    <header class="header">
-        <div class="header-content">
-            <a href="/" class="logo">miayis</a>
-            <a href="/" class="back-btn">← Ana Sayfa</a>
-        </div>
-    </header>
+    {% if current_user.is_authenticated %}
+        {% include 'partials/header.html' %}
+    {% else %}
+        <header class="header">
+            <div class="header-content">
+                <a href="/" class="logo">miayis</a>
+                <a href="/" class="back-btn">← Ana Sayfa</a>
+            </div>
+        </header>
+    {% endif %}
 
     <!-- Main Content -->
     <main class="main-content">
@@ -417,6 +471,23 @@
                 <p class="collection-description">{{ collection.description }}</p>
             {% endif %}
             <p class="collection-owner">Koleksiyon Sahibi: {{ user.username }}</p>
+            {% if current_user.is_authenticated %}
+            <div class="collection-actions">
+                <button class="like-btn {% if is_liked %}liked{% endif %}" 
+                        id="like-btn" 
+                        data-collection-id="{{ collection.id }}">
+                    <span class="like-icon">{% if is_liked %}❤️{% else %}🤍{% endif %}</span>
+                    <span class="likes-count" id="likes-count">{{ likes_count }}</span>
+                </button>
+            </div>
+            {% else %}
+            <div class="collection-actions">
+                <div class="like-btn" style="cursor: default;">
+                    <span class="like-icon">🤍</span>
+                    <span class="likes-count">{{ likes_count }}</span>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         {% if products %}
@@ -449,5 +520,57 @@
             </div>
         {% endif %}
     </main>
+
+    {% if current_user.is_authenticated %}
+    <script>
+        const collectionId = '{{ collection.id }}';
+        const likeBtn = document.getElementById('like-btn');
+        const likesCountEl = document.getElementById('likes-count');
+        let isLiked = {{ 'true' if is_liked else 'false' }};
+        let likesCount = {{ likes_count }};
+        
+        if (likeBtn) {
+            likeBtn.addEventListener('click', async function() {
+                const btn = this;
+                const action = isLiked ? 'unlike' : 'like';
+                
+                try {
+                    const response = await fetch(`/api/v1/collections/${collectionId}/${action}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        isLiked = !isLiked;
+                        likesCount = data.likes_count;
+                        
+                        // Update button
+                        if (isLiked) {
+                            btn.classList.add('liked');
+                            btn.querySelector('.like-icon').textContent = '❤️';
+                        } else {
+                            btn.classList.remove('liked');
+                            btn.querySelector('.like-icon').textContent = '🤍';
+                        }
+                        
+                        // Update count
+                        if (likesCountEl) {
+                            likesCountEl.textContent = likesCount;
+                        }
+                    } else {
+                        alert(data.message || 'Bir hata oluştu');
+                    }
+                } catch (error) {
+                    console.error('Like error:', error);
+                    alert('Bir hata oluştu');
+                }
+            });
+        }
+    </script>
+    {% endif %}
 </body>
 </html> 

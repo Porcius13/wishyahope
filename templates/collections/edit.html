@@ -271,23 +271,32 @@
         <div class="page-header">
             <h1 class="page-title">Koleksiyonu Düzenle</h1>
             <p class="page-subtitle">Koleksiyon adını, açıklamasını ve gizlilik ayarını güncelleyin.</p>
+            {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}
+            <div style="background: #ff6b6b; color: white; padding: 12px; border-radius: 8px; margin-top: 16px;">
+                ⚠️ Bu koleksiyon başka bir kullanıcıdan kopyalanmıştır ve düzenlenemez.
+            </div>
+            {% endif %}
         </div>
 
         <div class="form-container">
+            {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}
+            <form method="POST" style="opacity: 0.6; pointer-events: none;">
+            {% else %}
             <form method="POST">
+            {% endif %}
                 <div class="form-group">
                     <label for="name">Koleksiyon Adı *</label>
-                    <input type="text" id="name" name="name" value="{{ collection.name }}" required>
+                    <input type="text" id="name" name="name" value="{{ collection.name }}" required {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}disabled{% endif %}>
                 </div>
 
                 <div class="form-group">
                     <label for="description">Açıklama (İsteğe bağlı)</label>
-                    <textarea id="description" name="description" rows="3">{{ collection.description or '' }}</textarea>
+                    <textarea id="description" name="description" rows="3" {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}disabled{% endif %}>{{ collection.description or '' }}</textarea>
                 </div>
 
                 <div class="form-group">
                     <label for="type">Koleksiyon Türü</label>
-                    <select id="type" name="type">
+                    <select id="type" name="type" {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}disabled{% endif %}>
                         <option value="kombinler" {% if collection.type == 'kombinler' %}selected{% endif %}>Kombinler</option>
                         <option value="favoriler" {% if collection.type == 'favoriler' %}selected{% endif %}>Favoriler</option>
                         <option value="custom" {% if collection.type not in ['kombinler', 'favoriler'] %}selected{% endif %}>Diğer</option>
@@ -296,7 +305,7 @@
 
                 <div class="form-group">
                     <label for="privacy">Gizlilik</label>
-                    <select id="privacy" name="privacy">
+                    <select id="privacy" name="privacy" {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}disabled{% endif %}>
                         <option value="public" {% if collection.is_public %}selected{% endif %}>Herkese Açık</option>
                         <option value="private" {% if not collection.is_public %}selected{% endif %}>Gizli</option>
                     </select>
@@ -304,7 +313,7 @@
 
                 <div class="form-actions">
                     <a href="/profile/collections" class="cancel-btn">İptal</a>
-                    <button type="submit" class="submit-btn">Kaydet</button>
+                    <button type="submit" class="submit-btn" {% if collection.description and collection.description.startswith("[KOPYALANMIŞ]") %}disabled{% endif %}>Kaydet</button>
                 </div>
             </form>
         </div>

@@ -1,8 +1,10 @@
 """
 Users API endpoints
 """
+import json
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
+from models import User
 
 bp = Blueprint('users', __name__)
 
@@ -32,6 +34,158 @@ def update_profile():
             'message': 'Profil güncellendi'
         }), 200
     except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@bp.route('/<user_id>/follow', methods=['POST'])
+@login_required
+def follow_user(user_id):
+    """Kullanıcıyı takip et"""
+    try:
+        from app.repositories import get_repository
+        
+        if user_id == current_user.id:
+            return jsonify({
+                'success': False,
+                'message': 'Kendinizi takip edemezsiniz'
+            }), 400
+        
+        # Check if user exists
+        target_user = User.get_by_id(user_id)
+        if not target_user:
+            return jsonify({
+                'success': False,
+                'message': 'Kullanıcı bulunamadı'
+            }), 404
+        
+        repo = get_repository()
+        success = repo.follow_user(current_user.id, user_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Kullanıcı takip edildi'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Zaten takip ediliyor veya işlem başarısız'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@bp.route('/<user_id>/unfollow', methods=['POST'])
+@login_required
+def unfollow_user(user_id):
+    """Kullanıcıyı takipten çıkar"""
+    try:
+        from app.repositories import get_repository
+        
+        repo = get_repository()
+        success = repo.unfollow_user(current_user.id, user_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Takip bırakıldı'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Zaten takip edilmiyor'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@bp.route('/<user_id>/follow-status', methods=['GET'])
+@login_required
+def get_follow_status(user_id):
+    """Kullanıcıyı takip edip etmediğini kontrol et"""
+    try:
+        from app.repositories import get_repository
+        
+        repo = get_repository()
+        is_following = repo.is_following(current_user.id, user_id)
+        
+        return jsonify({
+            'success': True,
+            'is_following': is_following
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@bp.route('/<user_id>/message', methods=['POST'])
+@login_required
+def send_message(user_id):
+    """Kullanıcıya mesaj gönder (notification olarak)"""
+    try:
+        from app.repositories import get_repository
+        from datetime import datetime
+        
+        data = request.get_json()
+        message_text = data.get('message', '').strip()
+        
+        if not message_text:
+            return jsonify({
+                'success': False,
+                'message': 'Mesaj boş olamaz'
+            }), 400
+        
+        if user_id == current_user.id:
+            return jsonify({
+                'success': False,
+                'message': 'Kendinize mesaj gönderemezsiniz'
+            }), 400
+        
+        # Check if user exists
+        target_user = User.get_by_id(user_id)
+        if not target_user:
+            return jsonify({
+                'success': False,
+                'message': 'Kullanıcı bulunamadı'
+            }), 404
+        
+        repo = get_repository()
+        notification_message = f"{current_user.username} size mesaj gönderdi: {message_text}"
+        
+        notification_id = repo.create_notification(
+            user_id=user_id,
+            product_id=None,
+            notification_type='message',
+            message=notification_message,
+            payload=json.dumps({
+                'from_user_id': current_user.id,
+                'from_username': current_user.username,
+                'message': message_text
+            }),
+            created_at=datetime.now()
+        )
+        
+        if notification_id:
+            return jsonify({
+                'success': True,
+                'message': 'Mesaj gönderildi',
+                'notification_id': notification_id
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Mesaj gönderilemedi'
+            }), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)

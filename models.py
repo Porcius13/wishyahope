@@ -256,8 +256,10 @@ class User(UserMixin):
             if user_data:
                 # Handle timestamp conversion
                 created_at = user_data.get('created_at')
-                if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
-                    created_at = created_at
+                if hasattr(created_at, 'timestamp') and not hasattr(created_at, 'strftime'):  # Firestore Timestamp
+                    # Convert Firestore timestamp to Python datetime
+                    from datetime import datetime
+                    created_at = datetime.fromtimestamp(created_at.timestamp())
                 elif isinstance(created_at, str):
                     try:
                         created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
@@ -270,8 +272,10 @@ class User(UserMixin):
                     created_at = datetime.now()
                 
                 last_read = user_data.get('last_read_notifications_at')
-                if last_read and hasattr(last_read, 'timestamp'):  # Firestore Timestamp
-                    last_read = last_read
+                if last_read and hasattr(last_read, 'timestamp') and not hasattr(last_read, 'strftime'):  # Firestore Timestamp
+                    # Convert Firestore timestamp to Python datetime
+                    from datetime import datetime
+                    last_read = datetime.fromtimestamp(last_read.timestamp())
                 elif isinstance(last_read, str):
                     try:
                         last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
@@ -308,8 +312,10 @@ class User(UserMixin):
             if user_data:
                 # Handle timestamp conversion (same as get_by_id)
                 created_at = user_data.get('created_at')
-                if hasattr(created_at, 'timestamp'):
-                    created_at = created_at
+                if hasattr(created_at, 'timestamp') and not hasattr(created_at, 'strftime'):  # Firestore Timestamp
+                    # Convert Firestore timestamp to Python datetime
+                    from datetime import datetime
+                    created_at = datetime.fromtimestamp(created_at.timestamp())
                 elif isinstance(created_at, str):
                     try:
                         created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
@@ -322,8 +328,10 @@ class User(UserMixin):
                     created_at = datetime.now()
                 
                 last_read = user_data.get('last_read_notifications_at')
-                if last_read and hasattr(last_read, 'timestamp'):
-                    last_read = last_read
+                if last_read and hasattr(last_read, 'timestamp') and not hasattr(last_read, 'strftime'):  # Firestore Timestamp
+                    # Convert Firestore timestamp to Python datetime
+                    from datetime import datetime
+                    last_read = datetime.fromtimestamp(last_read.timestamp())
                 elif isinstance(last_read, str):
                     try:
                         last_read = datetime.strptime(last_read, '%Y-%m-%d %H:%M:%S.%f')
@@ -1068,8 +1076,10 @@ class Collection:
             if collection_data:
                 # Handle timestamp conversion
                 created_at = collection_data.get('created_at')
-                if hasattr(created_at, 'timestamp'):
-                    created_at = created_at
+                if hasattr(created_at, 'timestamp') and not hasattr(created_at, 'strftime'):  # Firestore Timestamp
+                    # Convert Firestore timestamp to Python datetime
+                    from datetime import datetime
+                    created_at = datetime.fromtimestamp(created_at.timestamp())
                 elif isinstance(created_at, str):
                     try:
                         created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')

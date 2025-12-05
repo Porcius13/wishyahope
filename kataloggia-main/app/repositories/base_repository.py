@@ -37,6 +37,11 @@ class BaseRepository(ABC):
         pass
     
     @abstractmethod
+    def get_all_users(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all users (for public user listing)"""
+        pass
+    
+    @abstractmethod
     def create_user(self, username: str, email: str, password_hash: str, 
                    profile_url: str, created_at: datetime, 
                    last_read_notifications_at: Optional[datetime] = None,
@@ -226,5 +231,52 @@ class BaseRepository(ABC):
     @abstractmethod
     def get_all_import_issues(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Get all import issues (admin)"""
+        pass
+    
+    # Follow operations
+    @abstractmethod
+    def follow_user(self, follower_id: str, following_id: str) -> bool:
+        """Follow a user"""
+        pass
+    
+    @abstractmethod
+    def unfollow_user(self, follower_id: str, following_id: str) -> bool:
+        """Unfollow a user"""
+        pass
+    
+    @abstractmethod
+    def is_following(self, follower_id: str, following_id: str) -> bool:
+        """Check if user is following another user"""
+        pass
+    
+    @abstractmethod
+    def get_followers(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all followers of a user"""
+        pass
+    
+    @abstractmethod
+    def get_following(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all users that a user is following"""
+        pass
+    
+    # Collection like operations
+    @abstractmethod
+    def like_collection(self, user_id: str, collection_id: str) -> bool:
+        """Like a collection"""
+        pass
+    
+    @abstractmethod
+    def unlike_collection(self, user_id: str, collection_id: str) -> bool:
+        """Unlike a collection"""
+        pass
+    
+    @abstractmethod
+    def is_collection_liked(self, user_id: str, collection_id: str) -> bool:
+        """Check if collection is liked by user"""
+        pass
+    
+    @abstractmethod
+    def get_collection_likes_count(self, collection_id: str) -> int:
+        """Get total likes count for a collection"""
         pass
 

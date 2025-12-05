@@ -109,6 +109,22 @@ class FirestoreRepository(BaseRepository):
             return data
         return None
     
+    def get_all_users(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get all users with pagination"""
+        users = []
+        # Firestore doesn't support offset with order_by, so we'll get all and slice
+        # For better performance with large datasets, consider using cursor-based pagination
+        query = self.db.collection('users').order_by('created_at', direction='DESCENDING').limit(limit + offset)
+        docs = query.stream()
+        
+        all_docs = list(docs)
+        # Apply offset manually
+        for doc in all_docs[offset:]:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            users.append(data)
+        return users
+    
     def create_user(self, username: str, email: str, password_hash: str, 
                    profile_url: str, created_at: datetime, 
                    last_read_notifications_at: Optional[datetime] = None,
@@ -440,10 +456,23 @@ class FirestoreRepository(BaseRepository):
             if not collection or collection.get('user_id') != user_id:
                 return False
 
+            # Check if collection is copied (cannot be edited)
+            description = collection.get('description', '')
+            if description and "[KOPYALANMIŞ]" in description:
+                print(f"[WARNING] Attempted to edit copied collection: {collection_id}")
+                return False
+
             allowed_fields = ['name', 'description', 'type', 'is_public']
             updates: Dict[str, Any] = {}
             for field, value in kwargs.items():
                 if field in allowed_fields and value is not None:
+                    # Prevent removing [KOPYALANMIŞ] marker from description
+                    if field == 'description' and description and "[KOPYALANMIŞ]" in description:
+                        # Keep the marker even if user tries to remove it
+                        if "[KOPYALANMIŞ]" not in str(value):
+                            # Extract original marker and preserve it
+                            marker_part = description.split("] ", 1)[0] + "] "
+                            value = marker_part + str(value)
                     updates[field] = value
 
             if not updates:
@@ -781,4 +810,152 @@ class FirestoreRepository(BaseRepository):
                     data['username'] = user.get('username')
             issues.append(data)
         return issues
+    
+    # Follow operations
+    def follow_user(self, follower_id: str, following_id: str) -> bool:
+        """Follow a user"""
+        if follower_id == following_id:
+            return False  # Can't follow yourself
+        
+        try:
+            # Check if already following
+            existing = self.db.collection('follows').where('follower_id', '==', follower_id).where('following_id', '==', following_id).limit(1).stream()
+            if list(existing):
+                return False  # Already following
+            
+            follow_id = str(uuid.uuid4())
+            follow_data = {
+                'follower_id': follower_id,
+                'following_id': following_id,
+                'created_at': self._datetime_to_timestamp(datetime.now())
+            }
+            self.db.collection('follows').document(follow_id).set(follow_data)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Follow user error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def unfollow_user(self, follower_id: str, following_id: str) -> bool:
+        """Unfollow a user"""
+        try:
+            follows = self.db.collection('follows').where('follower_id', '==', follower_id).where('following_id', '==', following_id).stream()
+            deleted = False
+            for follow in follows:
+                follow.reference.delete()
+                deleted = True
+            return deleted
+        except Exception as e:
+            print(f"[ERROR] Unfollow user error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def is_following(self, follower_id: str, following_id: str) -> bool:
+        """Check if user is following another user"""
+        try:
+            follows = self.db.collection('follows').where('follower_id', '==', follower_id).where('following_id', '==', following_id).limit(1).stream()
+            return len(list(follows)) > 0
+        except Exception as e:
+            print(f"[ERROR] Is following check error: {e}")
+            return False
+    
+    def get_followers(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all followers of a user"""
+        try:
+            follows = self.db.collection('follows').where('following_id', '==', user_id).stream()
+            followers = []
+            for follow in follows:
+                data = follow.to_dict()
+                data['id'] = follow.id
+                # Fetch user info
+                follower_id = data.get('follower_id')
+                if follower_id:
+                    user = self.get_user_by_id(follower_id)
+                    if user:
+                        data['username'] = user.get('username')
+                        data['email'] = user.get('email')
+                followers.append(data)
+            return followers
+        except Exception as e:
+            print(f"[ERROR] Get followers error: {e}")
+            return []
+    
+    def get_following(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all users that a user is following"""
+        try:
+            follows = self.db.collection('follows').where('follower_id', '==', user_id).stream()
+            following = []
+            for follow in follows:
+                data = follow.to_dict()
+                data['id'] = follow.id
+                # Fetch user info
+                following_id = data.get('following_id')
+                if following_id:
+                    user = self.get_user_by_id(following_id)
+                    if user:
+                        data['username'] = user.get('username')
+                        data['email'] = user.get('email')
+                following.append(data)
+            return following
+        except Exception as e:
+            print(f"[ERROR] Get following error: {e}")
+            return []
+    
+    # Collection like operations
+    def like_collection(self, user_id: str, collection_id: str) -> bool:
+        """Like a collection"""
+        try:
+            # Check if already liked
+            existing = self.db.collection('likes').where('user_id', '==', user_id).where('collection_id', '==', collection_id).limit(1).stream()
+            if list(existing):
+                return False  # Already liked
+            
+            like_id = str(uuid.uuid4())
+            like_data = {
+                'user_id': user_id,
+                'collection_id': collection_id,
+                'created_at': self._datetime_to_timestamp(datetime.now())
+            }
+            self.db.collection('likes').document(like_id).set(like_data)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Like collection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def unlike_collection(self, user_id: str, collection_id: str) -> bool:
+        """Unlike a collection"""
+        try:
+            likes = self.db.collection('likes').where('user_id', '==', user_id).where('collection_id', '==', collection_id).stream()
+            deleted = False
+            for like in likes:
+                like.reference.delete()
+                deleted = True
+            return deleted
+        except Exception as e:
+            print(f"[ERROR] Unlike collection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def is_collection_liked(self, user_id: str, collection_id: str) -> bool:
+        """Check if collection is liked by user"""
+        try:
+            likes = self.db.collection('likes').where('user_id', '==', user_id).where('collection_id', '==', collection_id).limit(1).stream()
+            return len(list(likes)) > 0
+        except Exception as e:
+            print(f"[ERROR] Is collection liked check error: {e}")
+            return False
+    
+    def get_collection_likes_count(self, collection_id: str) -> int:
+        """Get total likes count for a collection"""
+        try:
+            likes = self.db.collection('likes').where('collection_id', '==', collection_id).stream()
+            return len(list(likes))
+        except Exception as e:
+            print(f"[ERROR] Get collection likes count error: {e}")
+            return 0
 

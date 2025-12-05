@@ -101,14 +101,14 @@
         }
 
         .logo {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 18px;
-            font-weight: 400;
+            font-family: 'Alkatra', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+            font-size: 28px;
+            font-weight: 600;
             text-decoration: none;
             color: var(--text-primary);
-            letter-spacing: 0.05em;
+            letter-spacing: 0.03em;
             transition: opacity 0.2s ease;
-            text-transform: uppercase;
+            text-transform: none;
         }
 
         .logo:hover {
@@ -252,6 +252,394 @@
             border-left: 2px solid var(--text-primary);
         }
 
+        /* Notification Dropdown Styles */
+        .notification-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .notification-dropdown .notification-content {
+            right: 0;
+            left: auto;
+        }
+
+        .notification-btn {
+            background: transparent;
+            border: none;
+            padding: 0;
+            font-size: 20px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            position: relative;
+            color: var(--text-primary);
+        }
+
+        .notification-btn:hover {
+            opacity: 0.6;
+        }
+
+        .notification-icon {
+            font-size: 20px;
+            color: var(--text-primary);
+            line-height: 1;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #ff4757;
+            color: white;
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: bold;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .notification-content {
+            position: absolute;
+            top: calc(100% + 10px);
+            right: 0;
+            background: var(--card-bg);
+            min-width: 350px;
+            max-width: 400px;
+            max-height: 400px;
+            overflow-y: auto;
+            border-radius: 0;
+            z-index: 10000;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            display: none !important;
+        }
+
+        .notification-content.show {
+            display: block !important;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .notification-header h3 {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-primary);
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .mark-all-read {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--text-primary);
+            padding: 6px 12px;
+            border-radius: 0;
+            font-size: 10px;
+            font-weight: 400;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .mark-all-read:hover {
+            background: var(--text-primary);
+            color: var(--card-bg);
+        }
+
+        .notification-list {
+            padding: 15px 20px;
+        }
+
+        .notification-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .notification-item:last-child {
+            border-bottom: none;
+        }
+
+        .notification-item .icon {
+            font-size: 20px;
+            color: var(--accent-color);
+        }
+
+        .notification-item .message {
+            font-size: 14px;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+
+        .notification-item .timestamp {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .notification-item.unread {
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            padding: 12px 10px;
+        }
+
+        .no-notifications {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        .header-search {
+            flex: 1;
+            max-width: 600px;
+            margin: 0 40px;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .header-search input {
+            width: 100%;
+            padding: 12px 0;
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+            background: transparent;
+            color: var(--text-primary);
+            transition: border-color 0.2s ease;
+            font-family: inherit;
+            font-weight: 400;
+        }
+
+        .header-search input:focus {
+            outline: none;
+            border-bottom-color: var(--text-primary);
+        }
+
+        .header-search input::placeholder {
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+        }
+
+        .header-search-btn {
+            background: transparent;
+            color: var(--text-primary);
+            border: none;
+            padding: 0;
+            font-size: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 10px;
+            min-width: auto;
+        }
+
+        .header-search-btn:hover {
+            opacity: 0.6;
+            transform: translateY(-2px);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 24px;
+        }
+
+        .favorites-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-primary);
+            text-decoration: none;
+            font-size: 20px;
+            width: 28px;
+            height: 28px;
+            transition: opacity 0.2s ease;
+        }
+
+        .favorites-link:hover {
+            opacity: 0.6;
+        }
+
+        .nav-icon-link {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: var(--text-primary);
+            font-size: 20px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            text-decoration: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .nav-icon-link:hover {
+            opacity: 0.6;
+        }
+
+        .theme-toggle {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            padding: 0;
+            font-size: 20px;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+        }
+
+        .theme-toggle:hover {
+            opacity: 0.6;
+        }
+
+        .theme-icon {
+            transition: transform 0.3s ease;
+            line-height: 1;
+        }
+
+        [data-theme="dark"] .theme-icon {
+            transform: rotate(180deg);
+        }
+
+        .profile-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+
+        .profile-btn {
+            background: transparent;
+            border: none;
+            padding: 0;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            height: auto;
+        }
+
+        .profile-btn:hover {
+            opacity: 0.6;
+        }
+
+        .profile-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            color: var(--text-primary);
+        }
+
+        .profile-icon img {
+            width: 20px;
+            height: 20px;
+            display: block;
+        }
+
+        .profile-name {
+            font-weight: 600;
+        }
+
+        .dropdown-arrow {
+            font-size: 12px;
+            transition: transform 0.3s ease;
+        }
+
+        .profile-dropdown.active .dropdown-arrow {
+            transform: rotate(180deg);
+        }
+
+        .profile-dropdown-content {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 100%;
+            background: var(--card-bg);
+            min-width: 200px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 0;
+            z-index: 1000;
+            margin-top: 10px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .profile-dropdown-content.show {
+            display: block;
+        }
+
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 15px 20px;
+            border: none;
+            background: none;
+            text-align: left;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .dropdown-item:hover {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .dropdown-divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 8px 0;
+        }
+
+        .logout-item {
+            color: #ff4757;
+        }
+
+        .logout-item:hover {
+            background: #ff4757;
+            color: white;
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 padding: 0 15px;
@@ -270,25 +658,7 @@
 
 <body>
     <!-- Header -->
-    <header class="header">
-        <div class="header-content">
-            <a href="/" class="logo">miayis</a>
-            <div class="header-actions">
-                <button id="theme-toggle" class="theme-toggle" title="Tema Değiştir"
-                    style="background:none; border:none; cursor:pointer; font-size:16px;">
-                    <span class="theme-icon">🌙</span>
-                </button>
-                <a href="/dashboard" class="nav-btn">Ana Sayfa</a>
-                <a href="/collections" class="nav-btn">Koleksiyonlar</a>
-                <div class="profile-dropdown">
-                    <button class="profile-btn" id="profile-btn"
-                        style="background:none; border:none; cursor:pointer; font-size:16px;">
-                        <span class="profile-icon">👤</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </header>
+    {% include 'partials/header.html' %}
 
     <!-- Main Content -->
     <main class="main-content">
@@ -392,6 +762,52 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="{{ url_for('static', filename='js/toast-debug.js') }}"></script>
     <script>
+        // Header functionality
+        const headerSearchInput = document.getElementById('header-search-input');
+        const headerSearchBtn = document.getElementById('header-search-btn');
+
+        function addProductFromHeader() {
+            if (!headerSearchInput) return;
+            const url = headerSearchInput.value.trim();
+            if (!url) {
+                alert('Lütfen bir URL girin');
+                return;
+            }
+            window.location.href = `/dashboard?url=${encodeURIComponent(url)}`;
+        }
+
+        if (headerSearchBtn) {
+            headerSearchBtn.addEventListener('click', addProductFromHeader);
+        }
+
+        if (headerSearchInput) {
+            headerSearchInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    addProductFromHeader();
+                }
+            });
+        }
+
+        // Profile dropdown functionality
+        const profileBtn = document.getElementById('profile-btn');
+        const profileDropdown = document.getElementById('profile-dropdown');
+
+        if (profileBtn && profileDropdown) {
+            profileBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                profileDropdown.classList.toggle('show');
+                profileBtn.closest('.profile-dropdown').classList.toggle('active');
+            });
+        }
+
+        // Close profile dropdown when clicking outside
+        document.addEventListener('click', function (e) {
+            if (profileDropdown && profileBtn && !e.target.closest('.profile-dropdown')) {
+                profileDropdown.classList.remove('show');
+                profileBtn.closest('.profile-dropdown').classList.remove('active');
+            }
+        });
+
         // Dark mode functionality
         const themeToggle = document.getElementById('theme-toggle');
         const themeIcon = document.querySelector('.theme-icon');
@@ -412,6 +828,93 @@
         function updateThemeIcon(theme) {
             if (!themeIcon) return;
             themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
+        }
+
+        // Notifications
+        const notificationBtn = document.getElementById('notification-btn');
+        const notificationContent = document.getElementById('notification-content');
+
+        // Varsayılan olarak kapalı olduğundan emin ol
+        if (notificationContent) {
+            notificationContent.classList.remove('show');
+            notificationContent.style.display = 'none';
+        }
+
+        if (notificationBtn && notificationContent) {
+            notificationBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                const isVisible = notificationContent.style.display === 'block' || notificationContent.classList.contains('show');
+                if (isVisible) {
+                    notificationContent.style.display = 'none';
+                    notificationContent.classList.remove('show');
+                } else {
+                    notificationContent.style.display = 'block';
+                    notificationContent.classList.add('show');
+                    loadNotifications();
+                }
+            });
+
+            // Dışarı tıklandığında kapat
+            document.addEventListener('click', function (e) {
+                if (!e.target.closest('.notification-dropdown')) {
+                    notificationContent.style.display = 'none';
+                    notificationContent.classList.remove('show');
+                }
+            });
+        }
+
+        function loadNotifications() {
+            fetch('/notifications')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateNotificationBadge(data.unread_count);
+                        updateNotificationList(data.notifications);
+                    }
+                })
+                .catch(error => console.error('Bildirim yükleme hatası:', error));
+        }
+
+        function updateNotificationBadge(count) {
+            const badge = document.getElementById('notification-badge');
+            if (!badge) return;
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        function updateNotificationList(notifications) {
+            const list = document.getElementById('notification-list');
+            if (!list) return;
+            if (notifications.length === 0) {
+                list.innerHTML = '<div class="no-notifications">Henüz bildirim yok</div>';
+                return;
+            }
+            list.innerHTML = '';
+            notifications.forEach(notification => {
+                const item = document.createElement('div');
+                item.className = `notification-item ${notification.is_read ? '' : 'unread'}`;
+                item.innerHTML = `
+                    <div class="icon">${getNotificationIcon(notification.type)}</div>
+                    <div class="content">
+                        <div class="message">${notification.message}</div>
+                        <div class="timestamp">${notification.timestamp}</div>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+        }
+
+        function getNotificationIcon(type) {
+            switch (type) {
+                case 'price_drop': return '📉';
+                case 'price_increase': return '📈';
+                case 'price_alert': return '🚨';
+                default: return '🔔';
+            }
         }
 
         // Remove Tracking
