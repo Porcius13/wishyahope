@@ -1,7 +1,7 @@
 """
 Admin Routes
 """
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for
 from flask_login import login_required, current_user
 from app.utils.db_path import get_db_connection
 
@@ -172,6 +172,12 @@ def import_issues():
                     'reason_text': reason_text,
                     'raw_data': raw_data,
                     'created_at': created_at,
+                    'error_code': issue_data.get('error_code'),
+                    'error_category': issue_data.get('error_category'),
+                    'domain': issue_data.get('domain'),
+                    'retry_count': issue_data.get('retry_count', 0),
+                    'resolved': issue_data.get('resolved', False),
+                    'last_retry_at': issue_data.get('last_retry_at'),
                 }
             )
         
@@ -183,3 +189,54 @@ def import_issues():
     except Exception as e:
         print(f"[ERROR] Admin import issues error: {e}")
         return render_template('admin_import_issues.html', issues=[], user=current_user)
+
+
+@bp.route('/import-issues/<issue_id>/delete', methods=['POST'])
+@login_required
+def delete_import_issue(issue_id):
+    """Delete an import issue (admin can delete any issue)"""
+    from app.repositories import get_repository
+    from flask import jsonify
+    
+    repo = get_repository()
+    # Admin can delete any issue, so we don't check user_id
+    try:
+        # Get the issue first to check if it exists
+        all_issues = repo.get_all_import_issues(limit=10000)
+        issue_exists = any(issue.get('id') == issue_id for issue in all_issues)
+        
+        if not issue_exists:
+            if request.is_json:
+                return jsonify({'success': False, 'error': 'Hata kaydı bulunamadı'}), 404
+            flash('Hata kaydı bulunamadı', 'error')
+            return redirect(url_for('admin.import_issues'))
+        
+        # For admin, we need to get the user_id from the issue
+        issue_data = next((issue for issue in all_issues if issue.get('id') == issue_id), None)
+        if not issue_data:
+            if request.is_json:
+                return jsonify({'success': False, 'error': 'Hata kaydı bulunamadı'}), 404
+            flash('Hata kaydı bulunamadı', 'error')
+            return redirect(url_for('admin.import_issues'))
+        
+        user_id = issue_data.get('user_id')
+        success = repo.delete_import_issue(issue_id, user_id)
+        
+        if request.is_json:
+            if success:
+                return jsonify({'success': True, 'message': 'Hata kaydı silindi'}), 200
+            else:
+                return jsonify({'success': False, 'error': 'Hata kaydı silinemedi'}), 500
+        
+        if success:
+            flash('Hata kaydı başarıyla silindi', 'success')
+        else:
+            flash('Hata kaydı silinirken bir sorun oluştu', 'error')
+        
+        return redirect(url_for('admin.import_issues'))
+    except Exception as e:
+        print(f"[ERROR] Admin delete import issue error: {e}")
+        if request.is_json:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f'Hata kaydı silinirken bir sorun oluştu: {str(e)}', 'error')
+        return redirect(url_for('admin.import_issues'))

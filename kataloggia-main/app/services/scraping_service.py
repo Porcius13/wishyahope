@@ -98,7 +98,7 @@ class ScrapingService:
                 "image": image,
                 "brand": brand,
                 "url": url,
-                "images": [image],
+                "images": result.get("images", [image]),
                 "old_price": old_price,
                 "discount_message": result.get("discount_message")
             }

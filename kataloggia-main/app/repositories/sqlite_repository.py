@@ -150,6 +150,23 @@ class SQLiteRepository(BaseRepository):
             return dict(zip(columns, row)) if columns else None
         return None
     
+    def get_product_by_url(self, url: str) -> Optional[Dict[str, Any]]:
+        """Get product by URL (returns the most recent one if multiple exist)"""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # Normalize URL - remove trailing slashes for better matching
+        normalized_url = url.strip().rstrip('/')
+        # Try exact match first, then try original URL
+        cursor.execute('SELECT * FROM products WHERE url = ? OR url = ? ORDER BY created_at DESC LIMIT 1', 
+                      (normalized_url, url))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            return dict(zip(columns, row)) if columns else None
+        return None
+    
     def get_products_by_user_id(self, user_id: str) -> List[Dict[str, Any]]:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -755,6 +772,36 @@ class SQLiteRepository(BaseRepository):
             'reason': row[5],
             'created_at': row[6]
         } for row in rows]
+    
+    def delete_import_issue(self, issue_id: str, user_id: str) -> bool:
+        """Delete an import issue (only if it belongs to the user)"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # First check if the issue belongs to the user
+            cursor.execute('SELECT user_id FROM product_import_issues WHERE id = ?', (issue_id,))
+            row = cursor.fetchone()
+            
+            if not row:
+                conn.close()
+                print(f"[ERROR] Import issue not found: {issue_id}")
+                return False
+            
+            if row[0] != user_id:
+                conn.close()
+                print(f"[ERROR] User {user_id} cannot delete issue {issue_id} (belongs to {row[0]})")
+                return False
+            
+            # Delete the issue
+            cursor.execute('DELETE FROM product_import_issues WHERE id = ? AND user_id = ?', (issue_id, user_id))
+            conn.commit()
+            conn.close()
+            
+            return True
+        except Exception as e:
+            print(f"[ERROR] Delete import issue error: {e}")
+            return False
     
     # Follow operations
     def follow_user(self, follower_id: str, following_id: str) -> bool:

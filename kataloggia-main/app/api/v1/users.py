@@ -45,6 +45,8 @@ def follow_user(user_id):
     """Kullanıcıyı takip et"""
     try:
         from app.repositories import get_repository
+        from models import Notification
+        from datetime import datetime
         
         if user_id == current_user.id:
             return jsonify({
@@ -64,6 +66,23 @@ def follow_user(user_id):
         success = repo.follow_user(current_user.id, user_id)
         
         if success:
+            # Takip edilen kullanıcıya bildirim gönder
+            try:
+                notification_message = f"{current_user.username} sizi takip etmeye başladı"
+                Notification.create(
+                    user_id=user_id,
+                    product_id=None,
+                    type='follow',
+                    message=notification_message,
+                    payload=json.dumps({
+                        'follower_id': current_user.id,
+                        'follower_username': current_user.username
+                    })
+                )
+            except Exception as notif_error:
+                # Bildirim gönderme hatası işlemi durdurmamalı
+                print(f"[WARNING] Failed to send follow notification: {notif_error}")
+            
             return jsonify({
                 'success': True,
                 'message': 'Kullanıcı takip edildi'

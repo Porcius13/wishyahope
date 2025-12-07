@@ -67,10 +67,61 @@ def add_product():
             flash(error_msg, 'error')
             return redirect(url_for('dashboard.index'))
         
-        # URL'den ürün bilgilerini çek
-        print(f"[DEBUG] Scraping URL: {product_url}")
-        scraped_data = scraping_service.scrape_product(product_url)
-        print(f"[DEBUG] Scraped data: {scraped_data}")
+        # Hibrit yaklaşım: Önce DB'den kontrol et
+        from models import Product
+        from datetime import datetime, timedelta
+        
+        existing_product = Product.get_by_url(product_url)
+        scraped_data = None
+        should_scrape = True
+        
+        if existing_product:
+            # Timestamp kontrolü - 24 saat içindeyse DB'den kullan
+            created_at_dt = existing_product.created_at
+            
+            # Firestore Timestamp'i datetime'a çevir
+            if hasattr(created_at_dt, 'timestamp'):
+                # Firestore Timestamp object
+                created_at_dt = created_at_dt.to_datetime() if hasattr(created_at_dt, 'to_datetime') else datetime.fromtimestamp(created_at_dt.timestamp())
+            elif isinstance(created_at_dt, str):
+                try:
+                    created_at_dt = datetime.strptime(created_at_dt, '%Y-%m-%d %H:%M:%S.%f')
+                except ValueError:
+                    try:
+                        created_at_dt = datetime.strptime(created_at_dt, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        created_at_dt = datetime.now()
+            
+            if not isinstance(created_at_dt, datetime):
+                created_at_dt = datetime.now()
+            
+            time_diff = datetime.now() - created_at_dt
+            
+            if time_diff < timedelta(hours=24):
+                # DB'den kullan - 24 saat içinde
+                print(f"[DEBUG] Using existing product from DB (age: {time_diff})")
+                scraped_data = {
+                    'name': existing_product.name,
+                    'price': existing_product.price,
+                    'image': existing_product.image,
+                    'brand': existing_product.brand,
+                    'url': existing_product.url,
+                    'old_price': existing_product.old_price,
+                    'current_price': existing_product.current_price,
+                    'discount_percentage': existing_product.discount_percentage,
+                    'images': existing_product.images,
+                    'discount_message': existing_product.discount_info
+                }
+                should_scrape = False
+            else:
+                # 24 saatten eski, yeniden scrape et
+                print(f"[DEBUG] Existing product is too old (age: {time_diff}), re-scraping...")
+        
+        # Eğer DB'de yoksa veya eskiyse scrape et
+        if should_scrape:
+            print(f"[DEBUG] Scraping URL: {product_url}")
+            scraped_data = scraping_service.scrape_product(product_url)
+            print(f"[DEBUG] Scraped data: {scraped_data}")
         
         if not scraped_data:
             # Buraya genelde fiyat veya GÖRSEL bulunamadığında düşüyoruz
@@ -93,6 +144,7 @@ def add_product():
             flash(error_msg, 'error')
             return redirect(url_for('dashboard.index'))
         
+        # Kritik alan kontrolleri - sadece bunlar hata kaydı oluşturur
         if not scraped_data.get('name'):
             error_msg = 'Ürün adı bulunamadı. Lütfen geçerli bir ürün URL\'si girin.'
             print(f"[ERROR] Product name not found in scraped data: {scraped_data}")
@@ -111,12 +163,61 @@ def add_product():
             flash(error_msg, 'error')
             return redirect(url_for('dashboard.index'))
         
-        # Eksik bilgi kontrolü (partial)
-        partial_reasons = []
-        if not scraped_data.get('old_price'):
-            partial_reasons.append('Eski fiyat bulunamadı')
-        if not scraped_data.get('discount_message'):
-            partial_reasons.append('İndirim bilgisi bulunamadı')
+        if not scraped_data.get('price'):
+            error_msg = 'Ürün fiyatı bulunamadı. Lütfen geçerli bir ürün URL\'si girin.'
+            print(f"[ERROR] Product price not found in scraped data: {scraped_data}")
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='failed',
+                reason=error_msg,
+                raw_data=scraped_data
+            )
+            if request.is_json:
+                return jsonify({
+                    'success': False,
+                    'error': error_msg
+                }), 404
+            flash(error_msg, 'error')
+            return redirect(url_for('dashboard.index'))
+        
+        if not scraped_data.get('image'):
+            error_msg = 'Ürün görseli bulunamadı. Lütfen geçerli bir ürün URL\'si girin.'
+            print(f"[ERROR] Product image not found in scraped data: {scraped_data}")
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='failed',
+                reason=error_msg,
+                raw_data=scraped_data
+            )
+            if request.is_json:
+                return jsonify({
+                    'success': False,
+                    'error': error_msg
+                }), 404
+            flash(error_msg, 'error')
+            return redirect(url_for('dashboard.index'))
+        
+        # Marka kontrolü - UNKNOWN ise hata kaydı oluştur
+        brand = scraped_data.get('brand', '').strip().upper()
+        if not brand or brand == 'UNKNOWN':
+            error_msg = 'Ürün markası bulunamadı veya UNKNOWN olarak listelendi.'
+            print(f"[ERROR] Product brand is UNKNOWN or missing: {scraped_data.get('brand')}")
+            ProductImportIssue.create(
+                user_id=current_user.id,
+                url=product_url,
+                status='failed',
+                reason=error_msg,
+                raw_data=scraped_data
+            )
+            if request.is_json:
+                return jsonify({
+                    'success': False,
+                    'error': error_msg
+                }), 404
+            flash(error_msg, 'error')
+            return redirect(url_for('dashboard.index'))
 
         # Ürünü oluştur
         product = product_service.create_product(
@@ -131,16 +232,6 @@ def add_product():
             discount_percentage=scraped_data.get('discount_percentage'),
             images=scraped_data.get('images')
         )
-
-        # Eğer bazı alanlar eksikse, partial kayıt oluştur
-        if partial_reasons:
-            ProductImportIssue.create(
-                user_id=current_user.id,
-                url=product_url,
-                status='partial',
-                reason='; '.join(partial_reasons),
-                raw_data=scraped_data
-            )
         
         if request.is_json:
             return jsonify({

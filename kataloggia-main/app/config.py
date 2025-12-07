@@ -13,7 +13,8 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'favit-secret-key-2025')
 
     # Database backend: 'sqlite' or 'firestore'
-    DB_BACKEND = os.environ.get('DB_BACKEND', 'sqlite')
+    # Default is now 'firestore' - SQLite support is deprecated
+    DB_BACKEND = os.environ.get('DB_BACKEND', 'firestore')
 
     # Database path for raw sqlite3 usage (non-SQLAlchemy code)
     DATABASE_PATH = os.environ.get('DATABASE_PATH', 'favit.db')
@@ -62,6 +63,8 @@ class TestingConfig(Config):
     """Testing configuration"""
     DEBUG = True
     TESTING = True
+    # Note: SQLite in-memory database is still used for testing
+    # If you want to use Firestore for testing, set DB_BACKEND=firestore
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
 
 config = {

@@ -4,9 +4,16 @@ Returns the appropriate repository implementation based on configuration
 """
 import os
 from flask import current_app
-from app.repositories.sqlite_repository import SQLiteRepository
 from app.repositories.firestore_repository import FirestoreRepository
 from app.config import Config
+
+# SQLite repository is optional (deprecated, only for backward compatibility)
+try:
+    from app.repositories.sqlite_repository import SQLiteRepository
+    SQLITE_AVAILABLE = True
+except ImportError:
+    SQLiteRepository = None
+    SQLITE_AVAILABLE = False
 
 
 # Singleton instance
@@ -55,9 +62,15 @@ def get_repository():
         _repository_instance = FirestoreRepository()
         print(f"[INFO] FirestoreRepository created successfully")
     else:
-        # Default to SQLite
+        # SQLite support (deprecated)
+        if not SQLITE_AVAILABLE:
+            raise ImportError(
+                "SQLite repository is not available. "
+                "Please set DB_BACKEND=firestore or install SQLite dependencies. "
+                "SQLite support is deprecated."
+            )
         _repository_instance = SQLiteRepository()
-        print(f"[WARNING] SQLiteRepository created (DB_BACKEND={db_backend}, Firestore expected!)")
+        print(f"[WARNING] SQLiteRepository created (DB_BACKEND={db_backend}). SQLite is deprecated, consider using Firestore.")
     
     return _repository_instance
 

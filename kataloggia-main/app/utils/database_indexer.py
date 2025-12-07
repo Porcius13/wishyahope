@@ -1,15 +1,21 @@
 """
 Database Indexing Utilities
-SQLite için index optimizasyonları
+SQLite için index optimizasyonları (deprecated - SQLite artık varsayılan değil)
 """
-import sqlite3
+# SQLite import is optional (deprecated)
+try:
+    import sqlite3
+    SQLITE_AVAILABLE = True
+except ImportError:
+    sqlite3 = None
+    SQLITE_AVAILABLE = False
 
 class DatabaseIndexer:
     """Database indexing utilities"""
     
     @staticmethod
     def create_indexes():
-        """Performans için indexler oluştur (sadece SQLite için)"""
+        """Performans için indexler oluştur (sadece SQLite için, deprecated)"""
         from app.config import Config
         
         # Check if using Firestore
@@ -17,14 +23,18 @@ class DatabaseIndexer:
             db_backend = Config.DB_BACKEND
         except:
             import os
-            db_backend = os.environ.get('DB_BACKEND', 'sqlite')
+            db_backend = os.environ.get('DB_BACKEND', 'firestore')  # Default is now firestore
         
         if db_backend == 'firestore':
             # Firestore indexes are created manually in Firebase Console
             print("[INFO] Firestore kullanılıyor - index'ler Firebase Console'dan oluşturulmalı")
             return
         
-        # SQLite indexing
+        # SQLite indexing (deprecated)
+        if not SQLITE_AVAILABLE:
+            print("[WARNING] SQLite is not available. Skipping index creation.")
+            return
+        
         from app.utils.db_path import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()

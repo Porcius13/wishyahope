@@ -61,6 +61,11 @@ class BaseRepository(ABC):
         pass
     
     @abstractmethod
+    def get_product_by_url(self, url: str) -> Optional[Dict[str, Any]]:
+        """Get product by URL (returns the most recent one if multiple exist)"""
+        pass
+    
+    @abstractmethod
     def get_products_by_user_id(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all products for a user"""
         pass
@@ -219,8 +224,13 @@ class BaseRepository(ABC):
     def create_import_issue(self, user_id: str, url: str, status: str,
                            reason: Optional[str] = None,
                            raw_data: Optional[str] = None,
-                           created_at: datetime = None) -> str:
-        """Create import issue, returns issue_id"""
+                           created_at: datetime = None,
+                           error_code: Optional[str] = None,
+                           error_category: Optional[str] = None,
+                           domain: Optional[str] = None,
+                           retry_count: int = 0,
+                           resolved: bool = False) -> str:
+        """Create import issue with enhanced tracking, returns issue_id"""
         pass
     
     @abstractmethod
@@ -231,6 +241,11 @@ class BaseRepository(ABC):
     @abstractmethod
     def get_all_import_issues(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Get all import issues (admin)"""
+        pass
+    
+    @abstractmethod
+    def delete_import_issue(self, issue_id: str, user_id: str) -> bool:
+        """Delete an import issue (only if it belongs to the user)"""
         pass
     
     # Follow operations

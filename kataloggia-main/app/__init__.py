@@ -49,7 +49,7 @@ def create_app(config_name='development'):
         app.config['DB_BACKEND'] = os.environ['DB_BACKEND']
         print(f"[INFO] DB_BACKEND set from environment: {os.environ['DB_BACKEND']}")
     else:
-        print(f"[WARNING] DB_BACKEND not set in environment, using config default: {app.config.get('DB_BACKEND', 'sqlite')}")
+        print(f"[WARNING] DB_BACKEND not set in environment, using config default: {app.config.get('DB_BACKEND', 'firestore')}")
     
     # Reset repository singleton to ensure it uses the correct backend
     from app.repositories.repository_factory import reset_repository

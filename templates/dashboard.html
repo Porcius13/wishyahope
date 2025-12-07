@@ -1670,6 +1670,70 @@
     </main>
 
     <script>
+        // Toast Notification System
+        class Toast {
+            constructor() {
+                this.container = document.createElement('div');
+                this.container.id = 'toast-container';
+                this.container.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    z-index: 10000;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                    pointer-events: none;
+                `;
+                document.body.appendChild(this.container);
+            }
+
+            show(message, type = 'info') {
+                const toast = document.createElement('div');
+                toast.className = `toast-notification toast-${type}`;
+                // Override styles to ensure visibility if CSS is missing/conflicting
+                toast.style.pointerEvents = 'auto';
+                
+                let icon = '🔔';
+                switch(type) {
+                    case 'success': icon = '✅'; break;
+                    case 'error': icon = '❌'; break;
+                    case 'warning': icon = '⚠️'; break;
+                    case 'info': icon = 'ℹ️'; break;
+                }
+
+                toast.innerHTML = `
+                    <div class="toast-icon">${icon}</div>
+                    <div class="toast-message">${message}</div>
+                `;
+
+                this.container.appendChild(toast);
+
+                // Animation
+                requestAnimationFrame(() => {
+                    toast.classList.add('show');
+                });
+
+                // Auto remove after 3 seconds
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.parentNode.removeChild(toast);
+                        }
+                    }, 300);
+                }, 3000);
+            }
+
+            success(msg) { this.show(msg, 'success'); }
+            error(msg) { this.show(msg, 'error'); }
+            info(msg) { this.show(msg, 'info'); }
+            warning(msg) { this.show(msg, 'warning'); }
+        }
+
+        // Initialize globally
+        window.toast = new Toast();
+
         // Add product to collection (AJAX) - MUST be defined FIRST before HTML onclick uses it
         window.addToCollection = function (collectionId, productId, collectionName) {
             console.log('[DEBUG] addToCollection called:', { collectionId, productId, collectionName });
@@ -2465,6 +2529,10 @@
                     return '📈';
                 case 'price_alert':
                     return '🚨';
+                case 'follow':
+                    return '👤';
+                case 'message':
+                    return '💬';
                 default:
                     return '🔔';
             }

@@ -18,6 +18,12 @@ project_root = parent_dir
 dotenv_path = os.path.join(project_root, '.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
+    print(f"[DEBUG] .env dosyası yüklendi: {dotenv_path}")
+    print(f"[DEBUG] DB_BACKEND={os.environ.get('DB_BACKEND', 'NOT SET')}")
+    print(f"[DEBUG] FIREBASE_CREDENTIALS_PATH={os.environ.get('FIREBASE_CREDENTIALS_PATH', 'NOT SET')}")
+    print(f"[DEBUG] FIREBASE_PROJECT_ID={os.environ.get('FIREBASE_PROJECT_ID', 'NOT SET')}")
+else:
+    print(f"[WARNING] .env dosyası bulunamadı: {dotenv_path}")
 
 from app import create_app, get_socketio
 from models import init_db

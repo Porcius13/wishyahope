@@ -431,6 +431,35 @@ SITE_SELECTORS = {
             ".product__image img"
         ],
         "brand": ["JERF"]
+    },
+    "manuka.com.tr": {
+        "title": ["h1", "meta[property='og:title']"],
+        "price": [
+            "div.product-price", 
+            "span.price",
+            "[data-testid='price']"
+        ],
+        "image": ["meta[property='og:image']", "img.product-image"],
+        "brand": ["MANUKA"]
+    },
+    "atewear.com.tr": {
+        "title": ["[data-hook='product-title']", "h1._2qrJf", "h1"],
+        "price": [
+             "[data-hook='product-price']", 
+             "span._26q5D",
+             "meta[property='product:price:amount']"
+        ],
+        "image": [
+             "meta[property='og:image']",
+             "[data-hook='product-image'] img"
+        ],
+        "brand": ["ATE WEAR"]
+    },
+    "opus3a.com": {
+        "title": ["h1"],
+        "price": ["div.price", "span.price", "span[class*='price']"],
+        "image": ["meta[property='og:image']", "img.product-image"],
+        "brand": ["meta[property='product:brand']", "a.brand", "a[href*='/k/']"]
     }
 }
 
@@ -3253,6 +3282,320 @@ async def extract_victoriassecret_data(page):
         }
     }''')
 
+async def extract_n11_data(page):
+    """N11 özel veri çekme"""
+    return await page.evaluate('''() => {
+        try {
+            const result = {
+                title: null,
+                price: null,
+                original_price: null,
+                image: null,
+                brand: null
+            };
+
+            // Title
+            const h1 = document.querySelector('h1.proName');
+            if (h1) result.title = h1.innerText.trim();
+
+            // Price - "699,90 TL" formatında almaya çalış
+            const newPrice = document.querySelector('.newPrice');
+            const insPrice = document.querySelector('ins'); 
+            const priceVal = newPrice || insPrice;
+            
+            if (priceVal) {
+                let txt = priceVal.innerText.replace(/[^0-9,]/g, ''); 
+                if (txt) result.price = txt + ' TL';
+            }
+
+            // Image
+            const img = document.querySelector('.imgObj img');
+            if (img) result.image = img.src;
+
+            // Brand
+            let brandText = null;
+            const brandLink = document.querySelector('a.brand');
+            if (brandLink) brandText = brandLink.href.split('/').pop().replace(/-/g, ' ').toUpperCase();
+            
+            if (!brandText) {
+                const brandEl = document.querySelector('.brand-name') || document.querySelector('.pro-brand') || document.querySelector('.brand');
+                if (brandEl) brandText = brandEl.innerText.trim();
+            }
+
+            if (brandText) result.brand = brandText;
+
+            // Fallback Brand
+            if (!result.brand) {
+               const jsonLd = document.querySelector('script[type="application/ld+json"]');
+               if (jsonLd) {
+                   try {
+                       const json = JSON.parse(jsonLd.innerText);
+                       if (json.brand && json.brand.name) result.brand = json.brand.name;
+                   } catch(e){}
+               }
+            }
+
+            return result;
+        } catch (e) { return null; }
+    }''')
+
+async def extract_opus3a_data(page):
+    """Opus3a özel veri çekme"""
+    return await page.evaluate('''() => {
+        try {
+            const result = {
+                title: null,
+                price: null,
+                original_price: null,
+                image: null,
+                brand: null
+            };
+
+            // Title - "Artist: Album - Format" yapısından temizle
+            const h1 = document.querySelector('h1');
+            let fullTitle = "";
+            if (h1) {
+                fullTitle = h1.innerText.trim();
+                // "Pink Floyd: Atom Heart Mother..."
+                // Title olarak sadece albüm adını almayı deneyebiliriz veya full kalabilir
+                result.title = fullTitle; 
+            }
+
+            // Brand
+            // 1. Meta tag
+            const metaBrand = document.querySelector('meta[property="product:brand"]');
+            if (metaBrand) result.brand = metaBrand.content;
+
+            // 2. Title'dan çıkar (Artist: Album)
+            if (!result.brand && fullTitle.includes(':')) {
+                result.brand = fullTitle.split(':')[0].trim();
+            }
+
+            // 3. Artist link (Fallback)
+            if (!result.brand) {
+                // Genellikle title'ın hemen üstünde veya altında olur
+                // "Giriş Yap" gibi şeyleri filtrele
+                const links = document.querySelectorAll('a');
+                for (const link of links) {
+                    if (link.href.includes('/f/') || link.href.includes('/k/')) { // Sanatçı linkleri genellikle bu formatta
+                        const txt = link.innerText.trim();
+                        if (txt && txt !== "Giriş Yap" && txt !== "Sepetim") {
+                            result.brand = txt;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Eğer hala "Giriş Yap" ise temizle
+            if (result.brand === "Giriş Yap" || result.brand === "Sepetim") result.brand = null;
+
+            // Price - "875,00 TL" -> "875 TL" formatla
+            const owner = document.querySelector('.price') || document.querySelector('.product-price') || document.querySelector('.current-price'); 
+            // Veya text search
+            if (!owner) {
+                 // Sayfada fiyat formatını ara
+            } else {
+                 let p = owner.innerText.trim();
+                 p = p.replace(/[^0-9,]/g, '');
+                 if (p) {
+                   if (p.endsWith(',00')) p = p.replace(',00', '');
+                   result.price = p + ' TL';
+                 }
+            }
+
+            // Image
+            const img = document.querySelector('meta[property="og:image"]');
+            if (img) result.image = img.content;
+
+            return result;
+        } catch (e) { return null; }
+    }''')
+
+async def extract_atewear_data(page):
+    """AteWear özel veri çekme (Shopify/Fallback)"""
+    return await page.evaluate('''() => {
+        try {
+            const result = {
+                title: null,
+                price: null,
+                original_price: null,
+                image: null,
+                brand: "ATE WEAR"
+            };
+
+            // 1. Meta tags (Prioritize og:price:amount seen in dump)
+            const ogPrice = document.querySelector('meta[property="og:price:amount"]');
+            if (ogPrice) {
+                let p = parseFloat(ogPrice.content);
+                // 749.00 -> 749,00 TL
+                result.price = p.toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " TL";
+            }
+
+            // 2. Shopify Analytics Object (Very reliable)
+            if (!result.price && window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product) {
+                const variants = window.ShopifyAnalytics.meta.product.variants;
+                if (variants && variants.length > 0) {
+                    let p = variants[0].price; 
+                    if (p > 0) {
+                        // Dump says "price": 74900 for 749.00 TL. So divide by 100.
+                        let val = p / 100.0;
+                        result.price = val.toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " TL";
+                    }
+                }
+            }
+
+            // 3. JSON-LD Fallback
+            if (!result.price) {
+                try {
+                    const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                    for (const script of scripts) {
+                        const json = JSON.parse(script.innerText);
+                        if (json['@type'] === 'Product') {
+                            if (json.offers) {
+                                let price = json.offers.price || json.offers[0].price;
+                                if (price) result.price = parseFloat(price).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " TL";
+                            }
+                            break; 
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            // Title & Image from Meta
+            const metaTitle = document.querySelector('meta[property="og:title"]');
+            if (metaTitle) result.title = metaTitle.content;
+
+            const metaImage = document.querySelector('meta[property="og:image"]');
+            if (metaImage) result.image = metaImage.content;
+            
+            return result;
+        } catch (e) { return null; }
+    }''')
+
+async def extract_mediamarkt_data(page):
+    """MediaMarkt özel veri çekme (JSON-LD öncelikli)"""
+    return await page.evaluate('''() => {
+        try {
+            const result = {
+                title: null,
+                price: null,
+                original_price: null,
+                image: null,
+                brand: null
+            };
+
+            // 1. JSON-LD (En temiz veri kaynağı)
+            try {
+                const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                for (const script of scripts) {
+                    const json = JSON.parse(script.innerText);
+                    
+                    // MediaMarkt bazen BuyAction içine gömüyor
+                    let product = null;
+                    if (json['@type'] === 'Product') {
+                        product = json;
+                    } else if (json['@type'] === 'BuyAction' && json.object && json.object['@type'] === 'Product') {
+                        product = json.object;
+                    }
+
+                    if (product) {
+                        if (product.name) result.title = product.name;
+                        if (product.image) result.image = product.image;
+                        if (product.brand) {
+                            result.brand = (typeof product.brand === 'object') ? product.brand.name : product.brand;
+                        }
+                        
+                        if (product.offers) {
+                            let price = product.offers.price;
+                            if (price) {
+                                // Tamsayı ise küsurat ekleme
+                                let p = parseFloat(price);
+                                result.price = p.toLocaleString('tr-TR', {minimumFractionDigits: 0, maximumFractionDigits: 2}) + " TL";
+                            }
+                        }
+                    }
+                    if (result.price) break;
+                }
+            } catch(e) {}
+
+            return result;
+        } catch (e) { return null; }
+    }''')
+
+async def extract_beymen_data(page):
+    """Beymen özel veri çekme"""
+    return await page.evaluate('''() => {
+        try {
+            const result = {
+                title: null,
+                price: null,
+                original_price: null,
+                image: null,
+                brand: null
+            };
+
+            // 1. JSON-LD
+            try {
+                const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                for (const script of scripts) {
+                    const json = JSON.parse(script.innerText);
+                    if (json['@type'] === 'Product') {
+                        result.title = json.name;
+                        
+                        // Handle image list properly
+                        if (Array.isArray(json.image)) {
+                            result.image = json.image[0]; // First image as main
+                            result.images = json.image;   // Keep all
+                        } else {
+                            result.image = json.image;
+                            result.images = [json.image];
+                        }
+                        
+                        result.brand = (json.brand && json.brand.name) ? json.brand.name : json.brand;
+                        
+                        if (json.offers) {
+                            let price = json.offers.price;
+                            if (price) result.price = parseFloat(price).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " TL";
+                        }
+                    }
+                }
+            } catch(e) {}
+
+            if (!result.price) {
+                // Fiyat alanı genellikle karışık: "-%25 12.000 9.000 TL"
+                const priceContainer = document.querySelector('.m-productPrice__salePrice') || document.querySelector('.m-productPrice') || document.querySelector('#priceNew');
+                if (priceContainer) {
+                    const txt = priceContainer.innerText.trim();
+                    const matches = txt.match(/(\d{1,3}(\.\d{3})*,\d{2})/g);
+                    if (matches && matches.length > 0) {
+                        result.price = matches[matches.length - 1] + " TL";
+                    }
+                }
+            }
+            
+            // 3. Body Text Search Fallback
+            if (!result.price) {
+                 const bodyText = document.body.innerText;
+                 // Look for "9.481,50 TL" pattern
+                 const matches = bodyText.match(/(\d{1,3}(\.\d{3})*,\d{2})\s*TL/g);
+                 if (matches && matches.length > 0) {
+                     // Genellikle sayfadaki en son fiyat veya en belirgin fiyat doğrudur, ama güvenli değil. 
+                     // İlk eşleşmeyi alalım veya belirli bir bölgeye bakalım.
+                     // Beymen'de fiyat genellikle üst kısımdadır.
+                     result.price = matches[0]; 
+                 }
+            }
+
+            if (!result.brand) {
+                const brandLink = document.querySelector('.m-productDetail__brand');
+                if (brandLink) result.brand = brandLink.innerText.trim();
+            }
+
+            return result;
+        } catch (e) { return null; }
+    }''')
+
 async def extract_gratis_data(page):
     """Gratis.com özel veri çekme - Kozmetik ve kişisel bakım ürünleri için optimize edilmiş"""
     return await page.evaluate('''() => {
@@ -3647,7 +3990,7 @@ async def fetch_data(url):
                 "Sec-Fetch-Mode": "navigate",
                 "Sec-Fetch-Site": "cross-site",
                 "Sec-Fetch-User": "?1"
-            } if "mango.com" in url else None
+            } if "mango.com" in url or "depop.com" in url else None
         )
         
         # Anti-detection scripts
@@ -3724,6 +4067,31 @@ async def fetch_data(url):
                 if reflect_data:
                     logging.info("Reflect Studio data found via extractor")
                     result.update(reflect_data)
+            
+            # 0.7. N11 Özel Kontrolü
+            if "n11.com" in url:
+                n11_data = await extract_n11_data(page)
+                if n11_data:
+                    logging.info("N11 data found via extractor")
+                    result.update(n11_data)
+                    if result["title"] and result["price"] and result["image"]:
+                        return result
+
+            # 0.8. Opus3a Özel Kontrolü
+            if "opus3a.com" in url:
+                opus_data = await extract_opus3a_data(page)
+                if opus_data:
+                    logging.info("Opus3a data found via extractor")
+                    result.update(opus_data)
+                    if result["title"] and result["price"] and result["image"]:
+                         return result
+
+            # 0.9. AteWear Özel Kontrolü
+            if "atewear.com.tr" in url:
+                ate_data = await extract_atewear_data(page)
+                if ate_data:
+                    logging.info("AteWear data found via extractor")
+                    result.update(ate_data)
                     if result["title"] and result["price"] and result["image"]:
                         return result
 
@@ -3754,7 +4122,25 @@ async def fetch_data(url):
                     if result["title"] and result["price"] and result["image"]:
                         return result
 
-            # 0.10. Jerf.com.tr Özel Kontrolü
+            # 0.10. MediaMarkt Özel Kontrolü
+            if "mediamarkt.com.tr" in url:
+                mm_data = await extract_mediamarkt_data(page)
+                if mm_data:
+                    logging.info("MediaMarkt data found via extractor")
+                    result.update(mm_data)
+                    if result["title"] and result["price"] and result["image"]:
+                         return result
+
+            # 0.11. Beymen Özel Kontrolü
+            if "beymen.com" in url:
+                beymen_data = await extract_beymen_data(page)
+                if beymen_data:
+                    logging.info("Beymen data found via extractor")
+                    result.update(beymen_data)
+                    if result["title"] and result["price"] and result["image"]:
+                         return result
+
+            # 0.11. Jerf.com.tr Özel Kontrolü
             if "jerf.com.tr" in url:
                 jerf_data = await extract_jerf_data(page)
                 if jerf_data:
@@ -4143,6 +4529,21 @@ async def fetch_data(url):
                             break
                 except Exception as e:
                     logging.debug(f"Regex price fallback failed: {e}")
+
+            # Manuka Özel Kontrolü (Fiyat Formatlama)
+            if "manuka.com.tr" in url and result["price"]:
+                # 4299.90 -> 4299,90 TL
+                try:
+                    price_text = result["price"].replace("TL", "").replace("₺", "").strip()
+                    if "." in price_text and "," not in price_text:
+                         val = float(price_text)
+                         result["price"] = f"{val:.2f}".replace('.', ',') + " TL"
+                except Exception as e:
+                    logging.debug(f"Manuka price formatting failed: {e}")
+
+            # Opus3a Title Cleanup
+            if "opus3a.com" in url and result["title"]:
+                 result["title"] = result["title"].split(" | ")[0].strip()
 
             # Son Temizlik ve Formatlama
             if result["title"]:

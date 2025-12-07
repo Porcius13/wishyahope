@@ -1,4 +1,3 @@
-import sqlite3
 import uuid
 import json
 import os
@@ -6,7 +5,14 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 
-from app.utils.db_path import get_db_path, get_db_connection
+# SQLite imports are optional (deprecated, only for backward compatibility)
+try:
+    import sqlite3
+    from app.utils.db_path import get_db_path, get_db_connection
+    SQLITE_AVAILABLE = True
+except ImportError:
+    sqlite3 = None
+    SQLITE_AVAILABLE = False
 
 def init_db():
     """Veritabanını başlat"""
@@ -27,7 +33,13 @@ def init_db():
         print("[INFO] Firestore database initialized")
         return
     
-    # SQLite initialization
+    # SQLite initialization (deprecated)
+    if not SQLITE_AVAILABLE:
+        raise ImportError(
+            "SQLite is not available. "
+            "Please set DB_BACKEND=firestore or install SQLite dependencies. "
+            "SQLite support is deprecated."
+        )
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -644,7 +656,9 @@ class User(UserMixin):
 class ProductImportIssue:
     """Ürün eklenirken yaşanan sorunları (başarısız/eksik) saklar"""
 
-    def __init__(self, id, user_id, url, status, reason, raw_data, created_at):
+    def __init__(self, id, user_id, url, status, reason, raw_data, created_at, 
+                 error_code=None, error_category=None, domain=None, retry_count=0, 
+                 resolved=False, last_retry_at=None):
         self.id = id
         self.user_id = user_id
         self.url = url
@@ -652,9 +666,69 @@ class ProductImportIssue:
         self.reason = reason
         self.raw_data = raw_data
         self.created_at = created_at
+        self.error_code = error_code
+        self.error_category = error_category
+        self.domain = domain
+        self.retry_count = retry_count
+        self.resolved = resolved
+        self.last_retry_at = last_retry_at
 
     @staticmethod
-    def create(user_id, url, status, reason=None, raw_data=None):
+    def _extract_domain(url):
+        """Extract domain from URL"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = (parsed.netloc or "").lower().replace("www.", "")
+            return domain if domain else None
+        except Exception:
+            return None
+    
+    @staticmethod
+    def _categorize_error(reason, scraped_data=None):
+        """Categorize error based on reason and scraped data"""
+        if not reason:
+            return None, None
+        
+        reason_lower = reason.lower()
+        
+        # Network/Connection errors
+        if any(keyword in reason_lower for keyword in ['timeout', 'connection', 'network', 'dns', 'refused']):
+            return 'NETWORK_ERROR', 'network'
+        
+        # Access denied / Bot detection
+        if any(keyword in reason_lower for keyword in ['access denied', 'forbidden', 'bot detected', 'blocked']):
+            return 'ACCESS_DENIED', 'access'
+        
+        # Missing data errors
+        if any(keyword in reason_lower for keyword in ['bulunamadı', 'not found', 'missing', 'eksik']):
+            if scraped_data:
+                missing_fields = []
+                if not scraped_data.get('name') or not scraped_data.get('title'):
+                    missing_fields.append('name')
+                if not scraped_data.get('price'):
+                    missing_fields.append('price')
+                if not scraped_data.get('image'):
+                    missing_fields.append('image')
+                
+                if missing_fields:
+                    return f'MISSING_{"_".join(missing_fields).upper()}', 'data'
+            
+            return 'MISSING_DATA', 'data'
+        
+        # Parsing errors
+        if any(keyword in reason_lower for keyword in ['parse', 'invalid', 'format', 'decode']):
+            return 'PARSING_ERROR', 'parsing'
+        
+        # URL errors
+        if any(keyword in reason_lower for keyword in ['url', 'link', 'geçersiz']):
+            return 'INVALID_URL', 'url'
+        
+        # Unknown/Other
+        return 'UNKNOWN_ERROR', 'other'
+    
+    @staticmethod
+    def create(user_id, url, status, reason=None, raw_data=None, error_code=None, error_category=None):
         """Yeni import sorunu kaydı oluştur (Repository pattern)"""
         try:
             from app.repositories import get_repository
@@ -664,11 +738,38 @@ class ProductImportIssue:
             # raw_data'yı JSON string'e çevir
             import json
             raw_str = None
+            scraped_data = None
             if raw_data is not None:
                 try:
-                    raw_str = json.dumps(raw_data, ensure_ascii=False) if not isinstance(raw_data, str) else raw_data
+                    if isinstance(raw_data, str):
+                        scraped_data = json.loads(raw_data)
+                        raw_str = raw_data
+                    else:
+                        scraped_data = raw_data
+                        raw_str = json.dumps(raw_data, ensure_ascii=False)
                 except Exception:
                     raw_str = str(raw_data)
+            
+            # Auto-categorize if not provided
+            if not error_code or not error_category:
+                auto_code, auto_category = ProductImportIssue._categorize_error(reason, scraped_data)
+                error_code = error_code or auto_code
+                error_category = error_category or auto_category
+            
+            # Extract domain
+            domain = ProductImportIssue._extract_domain(url)
+            
+            # Check if this URL was tried before (for retry count)
+            retry_count = 0
+            if url:
+                try:
+                    existing_issues = repo.get_import_issues_by_user_id(user_id, limit=1000)
+                    for issue in existing_issues:
+                        if issue.get('url') == url and not issue.get('resolved', False):
+                            retry_count = issue.get('retry_count', 0) + 1
+                            break
+                except Exception:
+                    pass
             
             issue_id = repo.create_import_issue(
                 user_id=user_id,
@@ -676,7 +777,11 @@ class ProductImportIssue:
                 status=status,
                 reason=reason,
                 raw_data=raw_str,
-                created_at=datetime.now()
+                created_at=datetime.now(),
+                error_code=error_code,
+                error_category=error_category,
+                domain=domain,
+                retry_count=retry_count
             )
 
             # Basit dosya logu: ürün linki + hata mesajı
@@ -695,7 +800,13 @@ class ProductImportIssue:
                 # Dosyaya yazma hatası uygulamayı bozmasın, sadece logla
                 print(f"[WARN] Could not write import issue to file log: {file_err}")
 
-            return ProductImportIssue(issue_id, user_id, url, status, reason, raw_str, datetime.now())
+            return ProductImportIssue(
+                issue_id, user_id, url, status, reason, raw_str, datetime.now(),
+                error_code=error_code,
+                error_category=error_category,
+                domain=domain,
+                retry_count=retry_count
+            )
         except Exception as e:
             print(f"[ERROR] Create import issue error: {e}")
             raise
@@ -726,6 +837,21 @@ class ProductImportIssue:
                 elif created_at is None:
                     created_at = datetime.now()
                 
+                # Handle last_retry_at timestamp
+                last_retry_at = issue_data.get('last_retry_at')
+                if last_retry_at and hasattr(last_retry_at, 'timestamp'):
+                    last_retry_at = last_retry_at
+                elif isinstance(last_retry_at, str):
+                    try:
+                        last_retry_at = datetime.strptime(last_retry_at, '%Y-%m-%d %H:%M:%S.%f')
+                    except ValueError:
+                        try:
+                            last_retry_at = datetime.strptime(last_retry_at, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            last_retry_at = None
+                else:
+                    last_retry_at = None
+                
                 issues.append(ProductImportIssue(
                     issue_data.get('id'),
                     issue_data.get('user_id'),
@@ -733,7 +859,13 @@ class ProductImportIssue:
                     issue_data.get('status'),
                     issue_data.get('reason'),
                     issue_data.get('raw_data'),
-                    created_at
+                    created_at,
+                    error_code=issue_data.get('error_code'),
+                    error_category=issue_data.get('error_category'),
+                    domain=issue_data.get('domain'),
+                    retry_count=issue_data.get('retry_count', 0),
+                    resolved=issue_data.get('resolved', False),
+                    last_retry_at=last_retry_at
                 ))
             
             return issues
@@ -860,6 +992,60 @@ class Product:
         
         repo = get_repository()
         product_data = repo.get_product_by_id(product_id)
+        
+        if not product_data:
+            return None
+        
+        # Handle images
+        images_data = product_data.get('images')
+        if isinstance(images_data, str):
+            try:
+                images_data = json.loads(images_data)
+            except:
+                images_data = [product_data.get('image')] if product_data.get('image') else []
+        elif not images_data:
+            images_data = [product_data.get('image')] if product_data.get('image') else []
+        
+        # Handle timestamp
+        created_at = product_data.get('created_at')
+        if hasattr(created_at, 'timestamp'):  # Firestore Timestamp
+            created_at = created_at
+        elif isinstance(created_at, str):
+            try:
+                created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S.%f')
+            except ValueError:
+                try:
+                    created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                except:
+                    created_at = datetime.now()
+        elif created_at is None:
+            created_at = datetime.now()
+        
+        return Product(
+            product_data.get('id'),
+            product_data.get('user_id'),
+            product_data.get('name'),
+            product_data.get('price'),
+            product_data.get('image'),
+            product_data.get('brand'),
+            product_data.get('url'),
+            created_at,
+            product_data.get('old_price'),
+            product_data.get('current_price'),
+            product_data.get('discount_percentage'),
+            images_data,
+            product_data.get('discount_info')
+        )
+    
+    @staticmethod
+    def get_by_url(url):
+        """URL ile ürün getir (Repository pattern) - en yeni olanı döndürür"""
+        from app.repositories import get_repository
+        from datetime import datetime
+        import json
+        
+        repo = get_repository()
+        product_data = repo.get_product_by_url(url)
         
         if not product_data:
             return None

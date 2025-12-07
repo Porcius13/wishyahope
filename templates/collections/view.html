@@ -21,6 +21,7 @@
 
     <style>
         :root {
+            /* Les Benjamins inspired color palette - Minimalist Black & White */
             --bg-primary: #ffffff;
             --bg-secondary: #fafafa;
             --text-primary: #000000;
@@ -30,6 +31,12 @@
             --accent-hover: #333333;
             --card-bg: #ffffff;
             --shadow: rgba(0, 0, 0, 0.05);
+            --success-bg: #f0f0f0;
+            --success-text: #000000;
+            --error-bg: #f0f0f0;
+            --error-text: #000000;
+            --gradient-primary: #000000;
+            --gradient-secondary: #000000;
             --glass-bg: rgba(255, 255, 255, 1);
             --glass-border: rgba(0, 0, 0, 0.1);
         }
@@ -44,6 +51,12 @@
             --accent-hover: #cccccc;
             --card-bg: #0a0a0a;
             --shadow: rgba(255, 255, 255, 0.05);
+            --success-bg: #1a1a1a;
+            --success-text: #ffffff;
+            --error-bg: #1a1a1a;
+            --error-text: #ffffff;
+            --gradient-primary: #ffffff;
+            --gradient-secondary: #ffffff;
             --glass-bg: rgba(0, 0, 0, 1);
             --glass-border: rgba(255, 255, 255, 0.1);
         }
@@ -53,6 +66,15 @@
             padding: 0;
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Touch-friendly improvements */
+        button,
+        a,
+        input,
+        select,
+        textarea {
+            touch-action: manipulation;
         }
 
         body {
@@ -104,16 +126,14 @@
 
         .nav-btn {
             background: transparent;
-            color: var(--text-secondary);
+            color: var(--text-primary);
             border: none;
             padding: 0;
-            font-size: 14px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 400;
             cursor: pointer;
             text-decoration: none;
             transition: opacity 0.2s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
         }
 
         .nav-btn:hover {
@@ -294,8 +314,8 @@
             border: none;
             padding: 0;
             color: var(--text-primary);
-            font-size: 12px;
-            font-weight: 400;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
             transition: opacity 0.2s ease;
             display: flex;
@@ -303,7 +323,7 @@
             gap: 8px;
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            height: 28px;
+            height: auto;
         }
 
         .profile-btn:hover {
@@ -351,6 +371,43 @@
             margin-top: 10px;
             border: 1px solid var(--border-color);
             overflow: hidden;
+        }
+
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            padding: 15px 20px;
+            border: none;
+            background: none;
+            text-align: left;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .dropdown-item:hover {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .dropdown-divider {
+            height: 1px;
+            background: var(--border-color);
+            margin: 8px 0;
+        }
+
+        .logout-item {
+            color: #ff4757;
+        }
+
+        .logout-item:hover {
+            background: #ff4757;
+            color: white;
         }
 
         .profile-dropdown-content.show {
@@ -513,6 +570,16 @@
             padding: 60px 40px;
         }
 
+        @media (max-width: 768px) {
+            .header-content {
+                padding: 0 20px;
+            }
+
+            .main-content {
+                padding: 40px 20px;
+            }
+        }
+
         .collection-header {
             margin-bottom: 60px;
             padding-bottom: 40px;
@@ -667,6 +734,135 @@
             transform: scale(1.1);
         }
 
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        .product-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px var(--shadow);
+        }
+
+        .product-image-container {
+            position: relative;
+            width: 100%;
+            padding-top: 100%;
+            overflow: hidden;
+            background: var(--bg-secondary);
+        }
+
+        .product-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .product-card:hover .product-image {
+            transform: scale(1.05);
+        }
+
+        .product-info {
+            padding: 20px;
+        }
+
+        .product-brand {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .product-name {
+            font-size: 14px;
+            font-weight: 400;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            line-height: 1.4;
+            min-height: 40px;
+        }
+
+        .price-container {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+
+        .product-price {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .product-old-price {
+            color: var(--text-secondary);
+            text-decoration: line-through;
+            text-decoration-color: #ff6b6b;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .product-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .view-btn {
+            flex: 1;
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--text-primary);
+            padding: 12px 20px;
+            border-radius: 0;
+            text-decoration: none;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 400;
+            transition: all 0.2s ease;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .view-btn:hover {
+            background: var(--text-primary);
+            color: var(--card-bg);
+        }
+
+        .discount-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: var(--text-primary);
+            color: var(--bg-primary);
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            z-index: 5;
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 padding: 0 20px;
@@ -696,7 +892,74 @@
 </head>
 
 <body>
-    {% include 'partials/header.html' %}
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <a href="/dashboard" class="logo">miayis</a>
+            <div class="header-search">
+                <input type="text" id="header-search-input" placeholder="LINK" autocomplete="off">
+                <button type="button" id="header-search-btn" class="header-search-btn" title="Ürün Ekle">➤</button>
+                <!-- Uploading / Progress Bar -->
+                <div class="header-upload-progress" id="header-upload-progress">
+                    <div class="header-upload-progress-bar" id="header-upload-progress-bar"></div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <nav class="nav-links">
+                    <a href="/profile/favorites" class="favorites-link" title="Favorilerim">
+                        💟
+                    </a>
+                    <a href="/collections" class="nav-btn nav-icon-link" title="Koleksiyonlar">
+                        🗂️
+                    </a>
+                    <a href="/price-tracking" class="nav-btn nav-icon-link" title="Fiyat Takibi">
+                        🏷️
+                    </a>
+                    <div class="notification-dropdown">
+                        <button id="notification-btn" class="notification-btn" title="Bildirimler">
+                            <span class="notification-icon">🔔</span>
+                            <span id="notification-badge" class="notification-badge" style="display: none;">0</span>
+                        </button>
+                        <div class="notification-content" id="notification-content">
+                            <div class="notification-header">
+                                <h3>Bildirimler</h3>
+                                <button id="mark-all-read" class="mark-all-read">Tümünü Okundu İşaretle</button>
+                            </div>
+                            <div class="notification-list" id="notification-list">
+                                <div class="no-notifications">Henüz bildirim yok</div>
+                            </div>
+                        </div>
+                    </div>
+                    <a href="/users" class="nav-btn nav-icon-link" title="Kullanıcılar">
+                        👥
+                    </a>
+                    <button id="theme-toggle" class="theme-toggle" title="Tema Değiştir">
+                        <span class="theme-icon">🌙</span>
+                    </button>
+                </nav>
+                <div class="profile-dropdown">
+                    <button class="profile-btn" id="profile-btn">
+                        <span class="profile-icon">
+                            <img src="{{ url_for('static', filename='img/profile-icon.svg') }}" alt="Profil">
+                        </span>
+                        <span class="profile-name">{{ current_user.username }}</span>
+                        <span class="dropdown-arrow">▼</span>
+                    </button>
+                    <div class="profile-dropdown-content" id="profile-dropdown">
+                        <a href="/profile" class="dropdown-item">👤 Profilim</a>
+                        <a href="/profile/favorites" class="dropdown-item">💟 Favorilerim</a>
+                        <a href="/profile/collections" class="dropdown-item">🗂️ Koleksiyonlarım</a>
+                        <a href="/admin/brands" class="dropdown-item">🏷️ Marka Yönetimi</a>
+                        <a href="/profile/import-issues" class="dropdown-item">⚠️ Hatalar</a>
+                        <a href="/profile/preferences" class="dropdown-item">🎨 Tercihlerim</a>
+                        <a href="/profile/settings" class="dropdown-item">⚙️ Hesap Bilgilerim</a>
+                        <div class="dropdown-divider"></div>
+                        <a href="/logout" class="dropdown-item logout-item">🚪 Çıkış Yap</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
 
     <main class="main-content">
         <div class="collection-header">
@@ -777,8 +1040,28 @@
         // Header functionality
         const headerSearchInput = document.getElementById('header-search-input');
         const headerSearchBtn = document.getElementById('header-search-btn');
-        const headerUploadProgress = document.getElementById('header-upload-progress');
-        const headerUploadProgressBar = document.getElementById('header-upload-progress-bar');
+
+        function addProductFromHeader() {
+            if (!headerSearchInput) return;
+            const url = headerSearchInput.value.trim();
+            if (!url) {
+                alert('Lütfen bir URL girin');
+                return;
+            }
+            window.location.href = `/dashboard?url=${encodeURIComponent(url)}`;
+        }
+
+        if (headerSearchBtn) {
+            headerSearchBtn.addEventListener('click', addProductFromHeader);
+        }
+
+        if (headerSearchInput) {
+            headerSearchInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    addProductFromHeader();
+                }
+            });
+        }
 
         function addProductFromHeader() {
             if (!headerSearchInput) return;
@@ -815,10 +1098,11 @@
             });
         }
 
+        // Close profile dropdown when clicking outside
         document.addEventListener('click', function (e) {
             if (profileDropdown && profileBtn && !e.target.closest('.profile-dropdown')) {
                 profileDropdown.classList.remove('show');
-                profileBtn.closest('.profile-dropdown')?.classList.remove('active');
+                profileBtn.closest('.profile-dropdown').classList.remove('active');
             }
         });
 
@@ -857,15 +1141,30 @@
         const notificationBtn = document.getElementById('notification-btn');
         const notificationContent = document.getElementById('notification-content');
 
+        // Varsayılan olarak kapalı olduğundan emin ol
+        if (notificationContent) {
+            notificationContent.classList.remove('show');
+            notificationContent.style.display = 'none';
+        }
+
         if (notificationBtn && notificationContent) {
             notificationBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                notificationContent.classList.toggle('show');
-                loadNotifications();
+                const isVisible = notificationContent.style.display === 'block' || notificationContent.classList.contains('show');
+                if (isVisible) {
+                    notificationContent.style.display = 'none';
+                    notificationContent.classList.remove('show');
+                } else {
+                    notificationContent.style.display = 'block';
+                    notificationContent.classList.add('show');
+                    loadNotifications();
+                }
             });
 
+            // Dışarı tıklandığında kapat
             document.addEventListener('click', function (e) {
                 if (!e.target.closest('.notification-dropdown')) {
+                    notificationContent.style.display = 'none';
                     notificationContent.classList.remove('show');
                 }
             });
@@ -916,13 +1215,47 @@
             });
         }
 
+        function updateNotificationBadge(count) {
+            const badge = document.getElementById('notification-badge');
+            if (!badge) return;
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
         function getNotificationIcon(type) {
             switch (type) {
                 case 'price_drop': return '📉';
                 case 'price_increase': return '📈';
                 case 'price_alert': return '🚨';
+                case 'follow': return '👤';
+                case 'message': return '💬';
                 default: return '🔔';
             }
+        }
+
+        // Mark all notifications as read
+        const markAllReadBtn = document.getElementById('mark-all-read');
+        if (markAllReadBtn) {
+            markAllReadBtn.addEventListener('click', function() {
+                fetch('/notifications/mark-all-read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateNotificationBadge(0);
+                        loadNotifications();
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            });
         }
 
         function shareCollection() {

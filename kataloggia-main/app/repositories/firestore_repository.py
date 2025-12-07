@@ -50,12 +50,38 @@ class FirestoreRepository(BaseRepository):
                 print(f"[INFO] Firebase initialized with credentials from file: {Config.FIREBASE_CREDENTIALS_PATH}")
             else:
                 # Use Application Default Credentials
-                firebase_admin.initialize_app(options={
-                    'projectId': Config.FIREBASE_PROJECT_ID
-                })
-                print("[INFO] Firebase initialized with Application Default Credentials")
+                try:
+                    firebase_admin.initialize_app(options={
+                        'projectId': Config.FIREBASE_PROJECT_ID
+                    })
+                    print("[INFO] Firebase initialized with Application Default Credentials")
+                except Exception as e:
+                    error_msg = str(e)
+                    if "DefaultCredentialsError" in error_msg or "credentials were not found" in error_msg.lower():
+                        raise RuntimeError(
+                            "Firebase credentials not found. For local development, you have two options:\n"
+                            "1. Use SQLite instead: Set environment variable DB_BACKEND=sqlite\n"
+                            "2. Set up Firebase credentials:\n"
+                            "   - Set FIREBASE_CREDENTIALS_PATH to your service account JSON file path, OR\n"
+                            "   - Set FIREBASE_CREDENTIALS_JSON with the JSON content as a string, OR\n"
+                            "   - Set up Application Default Credentials (gcloud auth application-default login)"
+                        ) from e
+                    raise
         
-        self.db = firestore.client()
+        try:
+            self.db = firestore.client()
+        except Exception as e:
+            error_msg = str(e)
+            if "DefaultCredentialsError" in error_msg or "credentials were not found" in error_msg.lower():
+                raise RuntimeError(
+                    "Firebase credentials not found. For local development, you have two options:\n"
+                    "1. Use SQLite instead: Set environment variable DB_BACKEND=sqlite\n"
+                    "2. Set up Firebase credentials:\n"
+                    "   - Set FIREBASE_CREDENTIALS_PATH to your service account JSON file path, OR\n"
+                    "   - Set FIREBASE_CREDENTIALS_JSON with the JSON content as a string, OR\n"
+                    "   - Set up Application Default Credentials (gcloud auth application-default login)"
+                ) from e
+            raise
     
     def init_db(self):
         """Firestore doesn't require schema initialization"""
@@ -167,6 +193,41 @@ class FirestoreRepository(BaseRepository):
             data['id'] = doc.id
             return data
         return None
+    
+    def get_product_by_url(self, url: str) -> Optional[Dict[str, Any]]:
+        """Get product by URL (returns the most recent one if multiple exist)"""
+        try:
+            # Normalize URL - remove trailing slashes and query params for better matching
+            normalized_url = url.strip().rstrip('/')
+            # Try exact match first
+            docs = self.db.collection('products').where('url', '==', normalized_url).order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).stream()
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                return data
+            
+            # If no exact match, try with original URL
+            if normalized_url != url:
+                docs = self.db.collection('products').where('url', '==', url).order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).stream()
+                for doc in docs:
+                    data = doc.to_dict()
+                    data['id'] = doc.id
+                    return data
+            
+            return None
+        except Exception as e:
+            # Fallback to memory sort if index not ready yet
+            print(f"[WARNING] Index not ready for URL search, using memory sort: {e}")
+            docs = self.db.collection('products').where('url', '==', url).stream()
+            products = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                products.append(data)
+            if products:
+                products.sort(key=lambda x: x.get('created_at') or datetime.min, reverse=True)
+                return products[0]
+            return None
     
     def get_products_by_user_id(self, user_id: str) -> List[Dict[str, Any]]:
         # Use order_by now that index is created (faster than memory sort)
@@ -768,7 +829,12 @@ class FirestoreRepository(BaseRepository):
     def create_import_issue(self, user_id: str, url: str, status: str,
                            reason: Optional[str] = None,
                            raw_data: Optional[str] = None,
-                           created_at: datetime = None) -> str:
+                           created_at: datetime = None,
+                           error_code: Optional[str] = None,
+                           error_category: Optional[str] = None,
+                           domain: Optional[str] = None,
+                           retry_count: int = 0,
+                           resolved: bool = False) -> str:
         issue_id = str(uuid.uuid4())
         if created_at is None:
             created_at = datetime.now()
@@ -776,16 +842,132 @@ class FirestoreRepository(BaseRepository):
         if isinstance(raw_data, dict):
             raw_data = json.dumps(raw_data)
         
+        # Extract domain from URL if not provided
+        if not domain and url:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                domain = (parsed.netloc or "").lower().replace("www.", "")
+            except Exception:
+                domain = None
+        
         issue_data = {
             'user_id': user_id,
             'url': url,
             'status': status,
             'reason': reason,
             'raw_data': raw_data,
-            'created_at': self._datetime_to_timestamp(created_at)
+            'created_at': self._datetime_to_timestamp(created_at),
+            'error_code': error_code,
+            'error_category': error_category,
+            'domain': domain,
+            'retry_count': retry_count,
+            'resolved': resolved,
+            'last_retry_at': None
         }
         self.db.collection('product_import_issues').document(issue_id).set(issue_data)
         return issue_id
+    
+    def update_import_issue_retry(self, issue_id: str, retry_count: int) -> bool:
+        """Update retry count for an import issue"""
+        try:
+            self.db.collection('product_import_issues').document(issue_id).update({
+                'retry_count': retry_count,
+                'last_retry_at': self._datetime_to_timestamp(datetime.now())
+            })
+            return True
+        except Exception as e:
+            print(f"[ERROR] Update import issue retry error: {e}")
+            return False
+    
+    def mark_import_issue_resolved(self, issue_id: str) -> bool:
+        """Mark an import issue as resolved"""
+        try:
+            self.db.collection('product_import_issues').document(issue_id).update({
+                'resolved': True
+            })
+            return True
+        except Exception as e:
+            print(f"[ERROR] Mark import issue resolved error: {e}")
+            return False
+    
+    def delete_import_issue(self, issue_id: str, user_id: str) -> bool:
+        """Delete an import issue (only if it belongs to the user)"""
+        try:
+            doc_ref = self.db.collection('product_import_issues').document(issue_id)
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                print(f"[ERROR] Import issue not found: {issue_id}")
+                return False
+            
+            issue_data = doc.to_dict()
+            if issue_data.get('user_id') != user_id:
+                print(f"[ERROR] User {user_id} cannot delete issue {issue_id} (belongs to {issue_data.get('user_id')})")
+                return False
+            
+            doc_ref.delete()
+            return True
+        except Exception as e:
+            print(f"[ERROR] Delete import issue error: {e}")
+            return False
+    
+    def get_import_issues_by_domain(self, domain: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get import issues for a specific domain"""
+        try:
+            docs = self.db.collection('product_import_issues').where('domain', '==', domain).order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit).stream()
+            issues = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                issues.append(data)
+            return issues
+        except Exception as e:
+            print(f"[ERROR] Get import issues by domain error: {e}")
+            return []
+    
+    def get_import_issue_statistics(self) -> Dict[str, Any]:
+        """Get statistics about import issues"""
+        try:
+            all_issues = self.db.collection('product_import_issues').stream()
+            
+            stats = {
+                'total': 0,
+                'failed': 0,
+                'partial': 0,
+                'resolved': 0,
+                'by_domain': {},
+                'by_error_category': {},
+                'by_status': {}
+            }
+            
+            for doc in all_issues:
+                data = doc.to_dict()
+                stats['total'] += 1
+                
+                status = data.get('status', 'unknown')
+                stats['by_status'][status] = stats['by_status'].get(status, 0) + 1
+                
+                if status == 'failed':
+                    stats['failed'] += 1
+                elif status == 'partial':
+                    stats['partial'] += 1
+                
+                if data.get('resolved'):
+                    stats['resolved'] += 1
+                
+                domain = data.get('domain')
+                if domain:
+                    stats['by_domain'][domain] = stats['by_domain'].get(domain, 0) + 1
+                
+                error_category = data.get('error_category')
+                if error_category:
+                    stats['by_error_category'][error_category] = stats['by_error_category'].get(error_category, 0) + 1
+            
+            return stats
+        except Exception as e:
+            print(f"[ERROR] Get import issue statistics error: {e}")
+            return {}
     
     def get_import_issues_by_user_id(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         docs = self.db.collection('product_import_issues').where('user_id', '==', user_id).order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit).stream()

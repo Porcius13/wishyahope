@@ -6,12 +6,12 @@
     <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
-    <!-- Stardos Stencil Font -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&family=Alkatra:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Stardos+Stencil:wght@400;700&family=Alkatra:wght@400;600&display=swap');
     </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/les-benjamins-theme.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/modern-ui.css') }}">
@@ -44,14 +44,14 @@
         }
         
         .logo {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 18px;
-            font-weight: 400;
+            font-family: 'Alkatra', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 28px;
+            font-weight: 600;
             text-decoration: none;
             color: var(--text-primary);
-            letter-spacing: 0.05em;
+            letter-spacing: 0.03em;
             transition: opacity 0.2s ease;
-            text-transform: uppercase;
+            text-transform: none;
         }
         
         .logo:hover {

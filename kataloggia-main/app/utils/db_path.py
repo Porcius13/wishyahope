@@ -37,8 +37,14 @@ def get_db_path():
     return db_path
 
 def get_db_connection():
-    """Veritabanı bağlantısı oluştur"""
-    import sqlite3
+    """Veritabanı bağlantısı oluştur (SQLite only, deprecated)"""
+    try:
+        import sqlite3
+    except ImportError:
+        raise ImportError(
+            "SQLite is not available. "
+            "This function is deprecated. Use Firestore instead by setting DB_BACKEND=firestore."
+        )
     db_path = get_db_path()
     return sqlite3.connect(db_path)
 

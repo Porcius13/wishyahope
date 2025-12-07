@@ -1,7 +1,7 @@
 """
 Profile routes
 """
-from flask import Blueprint, render_template, request, session, flash, redirect, url_for, current_app
+from flask import Blueprint, render_template, request, session, flash, redirect, url_for, current_app, jsonify
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 import os
@@ -106,10 +106,82 @@ def tracking():
 @bp.route('/import-issues')
 @login_required
 def import_issues():
-    """Ürün ekleme sorunları sayfası"""
+    """Ürün ekleme sorunları sayfası - gelişmiş filtreleme ve istatistiklerle"""
     from models import ProductImportIssue
-    issues = ProductImportIssue.get_by_user_id(current_user.id, limit=100)
-    return render_template('profile_import_issues.html', user=current_user, issues=issues)
+    from flask import request
+    from app.repositories import get_repository
+    
+    # Filtreleme parametreleri
+    status_filter = request.args.get('status', 'all')  # all, failed, partial, resolved
+    domain_filter = request.args.get('domain', '')
+    error_category_filter = request.args.get('error_category', '')
+    limit = int(request.args.get('limit', 100))
+    
+    # Tüm issue'ları al
+    all_issues = ProductImportIssue.get_by_user_id(current_user.id, limit=1000)
+    
+    # Filtreleme
+    filtered_issues = all_issues
+    if status_filter != 'all':
+        filtered_issues = [i for i in filtered_issues if i.status == status_filter]
+    if domain_filter:
+        domain_lower = domain_filter.lower()
+        filtered_issues = [i for i in filtered_issues if hasattr(i, 'domain') and i.domain and domain_lower in i.domain.lower()]
+    if error_category_filter:
+        filtered_issues = [i for i in filtered_issues if hasattr(i, 'error_category') and i.error_category == error_category_filter]
+    
+    # Limit uygula
+    filtered_issues = filtered_issues[:limit]
+    
+    # İstatistikler hesapla
+    stats = {
+        'total': len(all_issues),
+        'failed': len([i for i in all_issues if i.status == 'failed']),
+        'partial': len([i for i in all_issues if i.status == 'partial']),
+        'resolved': len([i for i in all_issues if hasattr(i, 'resolved') and getattr(i, 'resolved', False)]),
+        'by_domain': {},
+        'by_error_category': {}
+    }
+    
+    for issue in all_issues:
+        # Domain istatistikleri
+        if hasattr(issue, 'domain') and issue.domain:
+            stats['by_domain'][issue.domain] = stats['by_domain'].get(issue.domain, 0) + 1
+        
+        # Error category istatistikleri
+        if hasattr(issue, 'error_category') and issue.error_category:
+            stats['by_error_category'][issue.error_category] = stats['by_error_category'].get(issue.error_category, 0) + 1
+    
+    return render_template('profile_import_issues.html', 
+                         user=current_user, 
+                         issues=filtered_issues,
+                         stats=stats,
+                         status_filter=status_filter,
+                         domain_filter=domain_filter,
+                         error_category_filter=error_category_filter)
+
+
+@bp.route('/import-issues/<issue_id>/delete', methods=['POST'])
+@login_required
+def delete_import_issue(issue_id):
+    """Delete an import issue"""
+    from app.repositories import get_repository
+    
+    repo = get_repository()
+    success = repo.delete_import_issue(issue_id, current_user.id)
+    
+    if request.is_json:
+        if success:
+            return jsonify({'success': True, 'message': 'Hata kaydı silindi'}), 200
+        else:
+            return jsonify({'success': False, 'error': 'Hata kaydı silinemedi veya bulunamadı'}), 404
+    
+    if success:
+        flash('Hata kaydı başarıyla silindi', 'success')
+    else:
+        flash('Hata kaydı silinirken bir sorun oluştu', 'error')
+    
+    return redirect(url_for('profile.import_issues'))
 
 
 @bp.route('/avatar', methods=['POST'])
