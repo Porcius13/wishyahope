@@ -106,3 +106,7 @@ def get_remote_address():
         return request.headers.get('X-Forwarded-For').split(',')[0]
     return request.remote_addr or 'unknown'
 
+def get_client_ip():
+    """Get client IP address (alias for get_remote_address)"""
+    return get_remote_address()
+

@@ -163,7 +163,11 @@ class FirestoreRepository(BaseRepository):
             'profile_url': profile_url,
             'created_at': self._datetime_to_timestamp(created_at),
             'last_read_notifications_at': self._datetime_to_timestamp(last_read_notifications_at),
-            'avatar_url': avatar_url
+            'avatar_url': avatar_url,
+            'email_verified': True,  # Email verification disabled
+            'email_verification_token': None,
+            'email_verification_token_expires_at': None,
+            'locked_until': None  # For brute force protection
         }
         self.db.collection('users').document(user_id).set(user_data)
         return user_id
@@ -175,8 +179,14 @@ class FirestoreRepository(BaseRepository):
                 if value is not None:
                     if isinstance(value, datetime):
                         updates[key] = self._datetime_to_timestamp(value)
+                    elif isinstance(value, (int, float)) and key in ['locked_until']:
+                        # Timestamp value (already a float/int)
+                        updates[key] = value
                     else:
                         updates[key] = value
+                elif value is None and key in ['email_verification_token', 'email_verification_token_expires_at', 'locked_until']:
+                    # Allow setting to None explicitly
+                    updates[key] = None
             
             if updates:
                 self.db.collection('users').document(user_id).update(updates)
@@ -798,13 +808,37 @@ class FirestoreRepository(BaseRepository):
         return notification_id
     
     def get_notifications_by_user_id(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        docs = self.db.collection('notifications').where('user_id', '==', user_id).order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit).stream()
-        notifications = []
-        for doc in docs:
-            data = doc.to_dict()
-            data['id'] = doc.id
-            notifications.append(data)
-        return notifications
+        try:
+            # Firestore'da order_by için composite index gerekebilir
+            # Önce index olmadan deneyelim, hata alırsak index olmadan sorgulayalım
+            try:
+                docs = self.db.collection('notifications').where('user_id', '==', user_id).order_by('created_at', direction=firestore.Query.DESCENDING).limit(limit).stream()
+            except Exception as index_error:
+                # Index yoksa, order_by olmadan sorgula ve memory'de sırala
+                print(f"[WARNING] Firestore index error for notifications, using fallback: {index_error}")
+                docs = self.db.collection('notifications').where('user_id', '==', user_id).limit(limit * 2).stream()
+            
+            notifications = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                notifications.append(data)
+            
+            # Eğer order_by çalışmadıysa, memory'de sırala
+            if len(notifications) > 0:
+                try:
+                    # created_at'i datetime'a çevir ve sırala
+                    notifications.sort(key=lambda x: self._timestamp_to_datetime(x.get('created_at', datetime.min)) or datetime.min, reverse=True)
+                except:
+                    # Sıralama başarısız olursa, ilk limit kadarını al
+                    pass
+            
+            return notifications[:limit]
+        except Exception as e:
+            print(f"[ERROR] get_notifications_by_user_id error: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
     
     def mark_notifications_read(self, user_id: str) -> bool:
         try:
@@ -823,6 +857,18 @@ class FirestoreRepository(BaseRepository):
             return True
         except Exception as e:
             print(f"[ERROR] Mark notifications read error: {e}")
+            return False
+    
+    def mark_notification_read_by_id(self, notification_id: str) -> bool:
+        try:
+            ref = self.db.collection('notifications').document(notification_id)
+            doc = ref.get()
+            if doc.exists and doc.to_dict().get('read_at') is None:
+                ref.update({'read_at': self._datetime_to_timestamp(datetime.now())})
+                return True
+            return False
+        except Exception as e:
+            print(f"[ERROR] Mark notification read by ID error: {e}")
             return False
     
     # Product import issues operations

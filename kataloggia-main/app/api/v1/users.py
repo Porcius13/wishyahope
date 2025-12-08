@@ -151,6 +151,7 @@ def send_message(user_id):
     try:
         from app.repositories import get_repository
         from datetime import datetime
+        from flask import current_app
         
         data = request.get_json()
         message_text = data.get('message', '').strip()
@@ -178,6 +179,10 @@ def send_message(user_id):
         repo = get_repository()
         notification_message = f"{current_user.username} size mesaj gönderdi: {message_text}"
         
+        print(f"[DEBUG send_message] Sending message from {current_user.id} to {user_id}")
+        print(f"[DEBUG send_message] Message text: {message_text[:50]}")
+        
+        # Alıcıya bildirim oluştur
         notification_id = repo.create_notification(
             user_id=user_id,
             product_id=None,
@@ -186,18 +191,60 @@ def send_message(user_id):
             payload=json.dumps({
                 'from_user_id': current_user.id,
                 'from_username': current_user.username,
-                'message': message_text
+                'to_user_id': user_id,
+                'to_username': target_user.username,
+                'message': message_text,
+                'sent': False  # Bu alınan bir mesajdır
             }),
             created_at=datetime.now()
         )
+        print(f"[DEBUG send_message] Created notification for receiver: {notification_id}")
         
-        if notification_id:
+        # Gönderene de kayıt oluştur (gönderdiği mesajları görebilmesi için)
+        sender_notification_message = f"{target_user.username} kullanıcısına mesaj gönderdiniz: {message_text}"
+        sender_notification_id = repo.create_notification(
+            user_id=current_user.id,
+            product_id=None,
+            notification_type='message',
+            message=sender_notification_message,
+            payload=json.dumps({
+                'from_user_id': current_user.id,
+                'from_username': current_user.username,
+                'to_user_id': user_id,
+                'to_username': target_user.username,
+                'message': message_text,
+                'sent': True  # Bu mesajın gönderildiğini belirt
+            }),
+            created_at=datetime.now()
+        )
+        print(f"[DEBUG send_message] Created notification for sender: {sender_notification_id}")
+        
+        if notification_id and sender_notification_id:
+            # SocketIO ile real-time bildirim gönder
+            socketio = current_app.socketio if hasattr(current_app, 'socketio') else None
+            if socketio:
+                from app.services.notification_service import NotificationService
+                notification_service = NotificationService(socketio)
+                notification_service.send_notification(
+                    user_id=user_id,
+                    notification_type='message',
+                    message=notification_message,
+                    data={
+                        'from_user_id': current_user.id,
+                        'from_username': current_user.username,
+                        'message': message_text,
+                        'notification_id': notification_id
+                    }
+                )
+            
             return jsonify({
                 'success': True,
                 'message': 'Mesaj gönderildi',
-                'notification_id': notification_id
+                'notification_id': notification_id,
+                'sender_notification_id': sender_notification_id
             }), 200
         else:
+            print(f"[ERROR send_message] Failed to create notifications. receiver_id={notification_id}, sender_id={sender_notification_id}")
             return jsonify({
                 'success': False,
                 'message': 'Mesaj gönderilemedi'

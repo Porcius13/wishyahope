@@ -80,7 +80,7 @@ def create_app(config_name='development'):
     
     # Register blueprints
     from app.api.v1 import auth, products, collections, scraping, users, background_tasks, export, search
-    from app.routes import main, dashboard, profile, notifications, price_tracking, product_routes, collections as collections_ui, admin, users as users_ui
+    from app.routes import main, dashboard, profile, notifications, price_tracking, product_routes, collections as collections_ui, admin, users as users_ui, messages
     
     app.register_blueprint(main.bp)
     # Register auth routes without prefix for direct access (/login, /register, etc.)
@@ -88,6 +88,7 @@ def create_app(config_name='development'):
     app.register_blueprint(dashboard.bp)
     app.register_blueprint(profile.bp, url_prefix='/profile')
     app.register_blueprint(notifications.bp)
+    app.register_blueprint(messages.bp)
     app.register_blueprint(price_tracking.bp)
     app.register_blueprint(product_routes.bp, url_prefix='/product')
     app.register_blueprint(collections_ui.bp, url_prefix='/collections')

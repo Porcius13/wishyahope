@@ -84,7 +84,7 @@ class ScrapingService:
 
             # 6) Marka yoksa domain'den üret
             brand = result.get("brand")
-            if not brand or not str(brand).strip():
+            if not brand or not str(brand).strip() or brand == "UNKNOWN":
                 brand = domain.split('.')[0].upper() if domain else "UNKNOWN"
             
             # Clean old_price if exists
@@ -182,6 +182,9 @@ class ScrapingService:
                      price_num = float(price_str)
             else:
                 price_num = float(price_str)
+
+            if price_num == 0:
+                return None
 
             # Türk Lirası formatla
             if price_num >= 1000:

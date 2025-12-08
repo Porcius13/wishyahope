@@ -428,17 +428,31 @@
                 <div class="form-group">
                     <label for="password">Şifre</label>
                     <div class="password-wrapper">
-                        <input type="password" id="password" name="password" required>
+                        <input type="password" id="password" name="password" required autocomplete="new-password">
                         <button type="button" class="password-toggle" data-target="password">GÖSTER</button>
+                    </div>
+                    <div id="password-strength" style="margin-top: 8px; display: none;">
+                        <div style="height: 4px; background: var(--border-color); width: 100%; margin-bottom: 5px;">
+                            <div id="password-strength-bar" style="height: 100%; width: 0%; transition: all 0.3s ease;"></div>
+                        </div>
+                        <div id="password-strength-text" style="font-size: 10px; color: var(--text-secondary); text-transform: none;"></div>
+                        <ul id="password-requirements" style="list-style: none; padding: 0; margin: 8px 0 0 0; font-size: 10px; text-transform: none;">
+                            <li id="req-length" style="color: var(--text-secondary); margin: 4px 0;">✓ En az 8 karakter</li>
+                            <li id="req-upper" style="color: var(--text-secondary); margin: 4px 0;">✓ Büyük harf</li>
+                            <li id="req-lower" style="color: var(--text-secondary); margin: 4px 0;">✓ Küçük harf</li>
+                            <li id="req-number" style="color: var(--text-secondary); margin: 4px 0;">✓ Rakam</li>
+                            <li id="req-special" style="color: var(--text-secondary); margin: 4px 0;">✓ Özel karakter</li>
+                        </ul>
                     </div>
                 </div>
                 
                 <div class="form-group">
                     <label for="confirm_password">Şifre Tekrar</label>
                     <div class="password-wrapper">
-                        <input type="password" id="confirm_password" name="confirm_password" required>
+                        <input type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password">
                         <button type="button" class="password-toggle" data-target="confirm_password">GÖSTER</button>
                     </div>
+                    <div id="password-match" style="margin-top: 8px; font-size: 10px; color: var(--text-secondary); text-transform: none; display: none;"></div>
                 </div>
                 
                 <button type="submit" class="submit-btn">Kayıt Ol</button>
@@ -463,6 +477,123 @@
                     btn.textContent = isPassword ? 'GİZLE' : 'GÖSTER';
                 });
             });
+            
+            // Password strength checker
+            const passwordInput = document.getElementById('password');
+            const confirmPasswordInput = document.getElementById('confirm_password');
+            const strengthDiv = document.getElementById('password-strength');
+            const strengthBar = document.getElementById('password-strength-bar');
+            const strengthText = document.getElementById('password-strength-text');
+            const matchDiv = document.getElementById('password-match');
+            
+            function checkPasswordStrength(password) {
+                if (!password) {
+                    strengthDiv.style.display = 'none';
+                    return;
+                }
+                
+                strengthDiv.style.display = 'block';
+                
+                let score = 0;
+                const checks = {
+                    length: password.length >= 8,
+                    upper: /[A-Z]/.test(password),
+                    lower: /[a-z]/.test(password),
+                    number: /\d/.test(password),
+                    special: /[!@#$%^&*()_+\-=\[\]{};'\\:"|,.<>\/?]/.test(password)
+                };
+                
+                // Update requirement indicators
+                document.getElementById('req-length').style.color = checks.length ? '#4caf50' : 'var(--text-secondary)';
+                document.getElementById('req-upper').style.color = checks.upper ? '#4caf50' : 'var(--text-secondary)';
+                document.getElementById('req-lower').style.color = checks.lower ? '#4caf50' : 'var(--text-secondary)';
+                document.getElementById('req-number').style.color = checks.number ? '#4caf50' : 'var(--text-secondary)';
+                document.getElementById('req-special').style.color = checks.special ? '#4caf50' : 'var(--text-secondary)';
+                
+                // Calculate score
+                if (checks.length) score += 20;
+                if (checks.upper) score += 20;
+                if (checks.lower) score += 20;
+                if (checks.number) score += 20;
+                if (checks.special) score += 20;
+                
+                // Length bonus
+                if (password.length >= 12) score += 10;
+                if (password.length >= 16) score += 10;
+                
+                strengthBar.style.width = score + '%';
+                
+                if (score < 30) {
+                    strengthBar.style.background = '#f44336';
+                    strengthText.textContent = 'Çok Zayıf';
+                    strengthText.style.color = '#f44336';
+                } else if (score < 50) {
+                    strengthBar.style.background = '#ff9800';
+                    strengthText.textContent = 'Zayıf';
+                    strengthText.style.color = '#ff9800';
+                } else if (score < 70) {
+                    strengthBar.style.background = '#ffc107';
+                    strengthText.textContent = 'Orta';
+                    strengthText.style.color = '#ffc107';
+                } else if (score < 85) {
+                    strengthBar.style.background = '#8bc34a';
+                    strengthText.textContent = 'Güçlü';
+                    strengthText.style.color = '#8bc34a';
+                } else {
+                    strengthBar.style.background = '#4caf50';
+                    strengthText.textContent = 'Çok Güçlü';
+                    strengthText.style.color = '#4caf50';
+                }
+            }
+            
+            function checkPasswordMatch() {
+                const password = passwordInput.value;
+                const confirmPassword = confirmPasswordInput.value;
+                
+                if (!confirmPassword) {
+                    matchDiv.style.display = 'none';
+                    return;
+                }
+                
+                matchDiv.style.display = 'block';
+                
+                if (password === confirmPassword) {
+                    matchDiv.textContent = '✓ Şifreler eşleşiyor';
+                    matchDiv.style.color = '#4caf50';
+                } else {
+                    matchDiv.textContent = '✗ Şifreler eşleşmiyor';
+                    matchDiv.style.color = '#f44336';
+                }
+            }
+            
+            passwordInput.addEventListener('input', (e) => {
+                checkPasswordStrength(e.target.value);
+                checkPasswordMatch();
+            });
+            
+            confirmPasswordInput.addEventListener('input', checkPasswordMatch);
+            
+            // Form validation
+            const form = document.querySelector('form');
+            if (form) {
+                form.addEventListener('submit', (e) => {
+                    const password = passwordInput.value;
+                    const confirmPassword = confirmPasswordInput.value;
+                    
+                    if (password !== confirmPassword) {
+                        e.preventDefault();
+                        alert('Şifreler eşleşmiyor!');
+                        return false;
+                    }
+                    
+                    // Basic validation
+                    if (password.length < 8) {
+                        e.preventDefault();
+                        alert('Şifre en az 8 karakter olmalıdır!');
+                        return false;
+                    }
+                });
+            }
         });
     </script>
 

@@ -4389,7 +4389,7 @@ async def fetch_data(url):
                         "img[loading='lazy']", 
                         "img"
                     ],
-                    "brand": ["UNKNOWN"]
+                    "brand": []
                 }
             else:
                 if "original_price" not in selectors:

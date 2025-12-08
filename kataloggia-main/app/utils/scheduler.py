@@ -16,10 +16,10 @@ if CELERY_AVAILABLE:
     
     # Configure periodic tasks
     celery_app.conf.beat_schedule = {
-        # Her saat başı fiyat kontrolü
-        'check-prices-hourly': {
+        # Fiyat kontrolü - her 15 dakikada bir
+        'check-prices-periodic': {
             'task': 'price_tracking.check_prices',
-            'schedule': crontab(minute=0),  # Her saat başı
+            'schedule': 900.0,  # Her 15 dakikada bir (900 saniye)
         },
         # Her gün gece 2'de temizlik
         'cleanup-old-data': {

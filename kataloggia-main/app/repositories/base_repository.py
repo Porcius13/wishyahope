@@ -219,6 +219,11 @@ class BaseRepository(ABC):
         """Mark all notifications as read for a user"""
         pass
     
+    @abstractmethod
+    def mark_notification_read_by_id(self, notification_id: str) -> bool:
+        """Mark a single notification as read by ID"""
+        pass
+    
     # Product import issues operations
     @abstractmethod
     def create_import_issue(self, user_id: str, url: str, status: str,

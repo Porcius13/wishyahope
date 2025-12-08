@@ -93,10 +93,37 @@ class SQLiteRepository(BaseRepository):
         cursor = conn.cursor()
         
         try:
+            # Add new columns if they don't exist (for backward compatibility)
+            try:
+                cursor.execute('ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                cursor.execute('ALTER TABLE users ADD COLUMN email_verification_token TEXT')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                cursor.execute('ALTER TABLE users ADD COLUMN email_verification_token_expires_at TIMESTAMP')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            try:
+                cursor.execute('ALTER TABLE users ADD COLUMN locked_until REAL')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            
+            conn.commit()
+            
+            # Insert user with new fields
             cursor.execute('''
-                INSERT INTO users (id, username, email, password_hash, profile_url, created_at, last_read_notifications_at, avatar_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, username, email, password_hash, profile_url, created_at, last_read_notifications_at, avatar_url))
+                INSERT INTO users (id, username, email, password_hash, profile_url, created_at, 
+                                 last_read_notifications_at, avatar_url, email_verified,
+                                 email_verification_token, email_verification_token_expires_at, locked_until)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, username, email, password_hash, profile_url, created_at, 
+                  last_read_notifications_at, avatar_url, 1, None, None, None))
             conn.commit()
             return user_id
         except sqlite3.IntegrityError:
@@ -110,7 +137,8 @@ class SQLiteRepository(BaseRepository):
         cursor = conn.cursor()
         
         allowed_fields = ['username', 'email', 'password_hash', 'profile_url', 
-                         'last_read_notifications_at', 'avatar_url']
+                         'last_read_notifications_at', 'avatar_url', 'email_verified',
+                         'email_verification_token', 'email_verification_token_expires_at', 'locked_until']
         updates = []
         values = []
         
@@ -701,6 +729,24 @@ class SQLiteRepository(BaseRepository):
         except Exception as e:
             conn.rollback()
             print(f"[ERROR] Mark notifications read error: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def mark_notification_read_by_id(self, notification_id: str) -> bool:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                UPDATE notifications
+                SET read_at = ?
+                WHERE id = ? AND read_at IS NULL
+            ''', (datetime.now(), notification_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Mark notification read by ID error: {e}")
             return False
         finally:
             conn.close()

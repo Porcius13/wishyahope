@@ -2654,7 +2654,7 @@
                 }, 5000);
             });
 
-            // Her 30 saniyede bir fiyat güncellemesi kontrol et
+            // Her 60 saniyede bir fiyat güncellemesi kontrol et (1 dakika)
             if (priceUpdateInterval) {
                 clearInterval(priceUpdateInterval);
             }
@@ -2664,7 +2664,7 @@
                 } catch (error) {
                     console.error('[HATA] Fiyat güncelleme kontrolü hatası:', error);
                 }
-            }, 30000);
+            }, 60000); // 60 saniye = 60000 ms
         });
 
         // Sayfa kapatılırken interval'leri temizle (memory leak önleme)

@@ -15,7 +15,7 @@ sys.path.insert(0, parent_dir)
 def main():
     parser = argparse.ArgumentParser(description='Favit uygulamasını çalıştır')
     parser.add_argument('--port', type=int, default=5000, help='Port numarası (varsayılan: 5000)')
-    parser.add_argument('--host', type=str, default='0.0.0.0', help='Host adresi (varsayılan: 0.0.0.0)')
+    parser.add_argument('--host', type=str, default='127.0.0.1', help='Host adresi (varsayılan: 127.0.0.1)')
     parser.add_argument('--debug', action='store_true', help='Debug modunu aktifleştir')
     parser.add_argument('--no-debug', action='store_true', help='Debug modunu kapat')
     

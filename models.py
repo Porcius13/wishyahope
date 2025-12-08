@@ -1833,6 +1833,19 @@ class Notification:
         except Exception as e:
             print(f"[ERROR] Mark notifications read error: {e}")
             return False
+    
+    @staticmethod
+    def mark_read(notification_id):
+        """Tek bir bildirimi okundu işaretle (Repository pattern)"""
+        try:
+            from app.repositories import get_repository
+            
+            repo = get_repository()
+            result = repo.mark_notification_read_by_id(notification_id)
+            return result
+        except Exception as e:
+            print(f"[ERROR] Mark notification read error: {e}")
+            return False
 
 class Favorite:
     def __init__(self, id, user_id, product_id, created_at):
